@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MedCards</title>
+<title>🔒 MedCardPrivate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0d0d12;
-    --surface:#181824;
-    --surface2:#1e1e2c;
+    --bg:#0a120f;
+    --surface:#141f1a;
+    --surface2:#192b24;
     --text:#f0f0f6;
     --text-secondary:#66667a;
     --accent:#6366f1;
@@ -321,7 +321,7 @@
 <body>
 <nav class="topnav">
   <div class="topnav-inner">
-    <div class="brand" data-action="go-library"><span class="brand-dot"></span>MedCards</div>
+    <div class="brand" data-action="go-library"><span class="brand-dot"></span>🔒 MedCardPrivate</div>
     <div style="display:flex;align-items:center;gap:10px;">
       <span class="save-status" id="save-status"></span>
       <span class="streak-badge" id="streak-badge" title="Dias seguidos estudando">🔥 0</span>
@@ -341,7 +341,7 @@
   const API_BASE = 'https://henry006original--8baf8222903311f1b9d11607ee4eb77e.web.val.run';
   // 'private': this file's content lives in the private space, gated behind a PIN even to view.
   // 'public': content is readable by anyone; only writes require the PIN.
-  const API_SPACE = 'public';
+  const API_SPACE = 'private';
 
   let ownerPin = sessionStorage.getItem('mc_owner_pin') || null;
   let ownerMode = false;
