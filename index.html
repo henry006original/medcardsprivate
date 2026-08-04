@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedCards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0d12;
+    --surface:#181824;
+    --surface2:#1e1e2c;
+    --text:#f0f0f6;
+    --text-secondary:#66667a;
+    --accent:#6366f1;
+    --accent-dim:#6366f133;
+    --success:#22c55e;
+    --danger:#ef4444;
+    --warning:#f97316;
+    --radius:16px;
+    --radius-sm:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Outfit',sans-serif;
+    min-height:100vh;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #app{
+    max-width:760px;
+    margin:0 auto;
+    padding:76px 16px 40px;
+  }
+  a{color:inherit;text-decoration:none;}
+  button{
+    font-family:inherit;
+    cursor:pointer;
+    border:none;
+    background:none;
+    color:inherit;
+  }
+  input,textarea,select{
+    font-family:inherit;
+    background:var(--surface2);
+    border:1px solid #2a2a3c;
+    color:var(--text);
+    border-radius:var(--radius-sm);
+    padding:10px 12px;
+    font-size:15px;
+    outline:none;
+    transition:border-color .15s;
+  }
+  input:focus,textarea:focus,select:focus{border-color:var(--accent);}
+  textarea{resize:vertical;font-family:inherit;}
+
+  /* Top nav */
+  .topnav{
+    position:fixed;top:0;left:0;right:0;
+    height:60px;
+    background:rgba(13,13,18,.9);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid #1f1f2e;
+    display:flex;align-items:center;
+    z-index:50;
+  }
+  .topnav-inner{
+    max-width:760px;margin:0 auto;width:100%;
+    padding:0 16px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .brand{
+    font-weight:800;font-size:19px;letter-spacing:-.02em;
+    display:flex;align-items:center;gap:8px;
+    cursor:pointer;
+  }
+  .brand-dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--accent);
+    box-shadow:0 0 12px var(--accent);
+  }
+  .nav-link{
+    color:var(--text-secondary);
+    font-size:14px;font-weight:500;
+    padding:8px 12px;border-radius:var(--radius-sm);
+    transition:background .15s,color .15s;
+  }
+  .nav-link:hover{background:var(--surface2);color:var(--text);}
+
+  .save-status{font-size:12px;color:var(--text-secondary);white-space:nowrap;}
+
+  .streak-badge{
+    display:inline-flex;align-items:center;gap:4px;
+    font-size:13px;font-weight:700;
+    padding:6px 10px;border-radius:999px;
+    background:var(--surface2);color:var(--text-secondary);
+    transition:background .2s,color .2s;
+    white-space:nowrap;
+  }
+  .streak-badge.active{
+    background:linear-gradient(135deg,#f9731633,#ef444433);
+    color:#fdba74;
+  }
+
+  /* Breadcrumb */
+  .breadcrumb{
+    display:flex;align-items:center;flex-wrap:wrap;gap:4px;
+    margin:0 0 20px;
+    font-size:14px;color:var(--text-secondary);
+  }
+  .breadcrumb button{
+    color:var(--text-secondary);
+    padding:4px 6px;border-radius:6px;
+    transition:color .15s,background .15s;
+    max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .breadcrumb button:hover{color:var(--text);background:var(--surface2);}
+  .breadcrumb .current{color:var(--text);font-weight:600;}
+  .breadcrumb .sep{opacity:.5;}
+
+  h1.page-title{font-size:26px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em;}
+  .page-sub{color:var(--text-secondary);font-size:14px;margin:0 0 20px;}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;}
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;
+    padding:10px 16px;border-radius:var(--radius-sm);
+    font-size:14px;font-weight:600;
+    transition:filter .15s, transform .1s;
+    white-space:nowrap;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-primary:hover{filter:brightness(1.1);}
+  .btn-ghost{background:var(--surface2);color:var(--text);}
+  .btn-ghost:hover{filter:brightness(1.2);}
+  .btn-success{background:var(--success);color:#08130a;}
+  .btn-success:hover{filter:brightness(1.1);}
+  .btn-danger{background:var(--danger);color:#fff;}
+  .btn-danger:hover{filter:brightness(1.1);}
+  .btn-warning{background:var(--warning);color:#1a0d02;}
+  .btn-sm{padding:7px 12px;font-size:13px;border-radius:8px;}
+  .btn-icon{padding:8px;border-radius:8px;background:var(--surface2);}
+  .btn-icon:hover{filter:brightness(1.2);}
+  .btn:disabled{opacity:.4;cursor:not-allowed;}
+
+  .empty-state{
+    text-align:center;padding:60px 20px;color:var(--text-secondary);
+  }
+  .empty-state .emoji{font-size:44px;display:block;margin-bottom:14px;}
+  .empty-state h3{color:var(--text);margin:0 0 6px;font-size:18px;}
+  .empty-state p{margin:0 0 20px;font-size:14px;}
+
+  /* Cards list */
+  .card-list{display:flex;flex-direction:column;gap:10px;}
+  .item-row{
+    background:var(--surface);
+    border:1px solid #232333;
+    border-radius:var(--radius);
+    padding:14px 16px;
+    display:flex;align-items:center;gap:12px;
+    transition:border-color .15s, background .15s;
+  }
+  .item-row:hover{border-color:#33334a;background:var(--surface2);}
+  .item-row.archived-row{opacity:.5;}
+  .item-main{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:12px;}
+  .item-emoji{
+    width:42px;height:42px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:20px;flex-shrink:0;
+  }
+  .item-text{min-width:0;}
+  .item-title{font-weight:600;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .item-meta{font-size:12.5px;color:var(--text-secondary);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .item-actions{display:flex;gap:6px;flex-shrink:0;}
+  .accent-bar{width:4px;align-self:stretch;border-radius:4px;flex-shrink:0;}
+
+  .card-preview-row .item-title{white-space:normal;}
+  .card-preview-front{font-weight:600;font-size:15px;}
+  .card-preview-back{font-size:13px;color:var(--text-secondary);margin-top:3px;}
+
+  /* Badges */
+  .badge{
+    display:inline-flex;align-items:center;gap:3px;
+    font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+    white-space:nowrap;
+  }
+  .badge-correct{background:#22c55e22;color:#4ade80;}
+  .badge-wrong{background:#f9731622;color:#fb923c;}
+
+  /* Archived section */
+  .archive-toggle{
+    display:flex;align-items:center;gap:8px;
+    color:var(--text-secondary);font-size:13.5px;font-weight:600;
+    padding:12px 4px;margin-top:8px;
+    width:100%;
+    border-top:1px solid #201f2c;
+  }
+  .archive-toggle .chev{transition:transform .15s;font-size:11px;}
+  .archive-toggle.open .chev{transform:rotate(90deg);}
+  .archive-section{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+
+  /* Modal */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.6);
+    display:flex;align-items:center;justify-content:center;
+    padding:16px;z-index:200;
+    animation:fadeIn .15s ease;
+  }
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  .modal-box{
+    background:var(--surface);
+    border:1px solid #2a2a3c;
+    border-radius:var(--radius);
+    max-width:480px;width:100%;
+    max-height:88vh;overflow-y:auto;
+    padding:22px;
+    animation:slideUp .18s ease;
+  }
+  @keyframes slideUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+  .modal-title{font-size:18px;font-weight:700;margin:0 0 16px;}
+  .form-group{margin-bottom:14px;}
+  .form-label{display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px;font-weight:500;}
+  .form-group input,.form-group textarea,.form-group select{width:100%;}
+  .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
+  .emoji-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+  .emoji-choice{
+    width:38px;height:38px;border-radius:10px;background:var(--surface2);
+    display:flex;align-items:center;justify-content:center;font-size:18px;
+    border:2px solid transparent;
+  }
+  .emoji-choice.selected{border-color:var(--accent);}
+  .color-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+  .color-choice{
+    width:30px;height:30px;border-radius:50%;
+    border:2px solid transparent;
+  }
+  .color-choice.selected{border-color:#fff;}
+  .modal-danger-text{color:var(--text-secondary);font-size:14.5px;line-height:1.5;}
+  .modal-danger-text b{color:var(--text);}
+
+  /* Study mode */
+  .study-topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px;}
+  .study-stats{display:flex;gap:14px;font-size:13.5px;font-weight:600;}
+  .stat-correct{color:var(--success);}
+  .stat-wrong{color:var(--danger);}
+  .progress-outer{
+    height:6px;background:var(--surface2);border-radius:6px;overflow:hidden;margin-bottom:24px;
+  }
+  .progress-inner{height:100%;background:var(--accent);transition:width .25s ease;}
+  .progress-label{font-size:12.5px;color:var(--text-secondary);margin-bottom:6px;display:flex;justify-content:space-between;}
+
+  .flashcard{
+    background:var(--surface);
+    border:1px solid #262638;
+    border-radius:20px;
+    min-height:260px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:36px 24px;
+    cursor:pointer;
+    font-size:19px;font-weight:600;line-height:1.5;
+    transition:border-color .15s;
+    position:relative;
+  }
+  .flashcard:hover{border-color:var(--accent);}
+  .flashcard.revealed{background:var(--surface2);cursor:default;}
+  .flashcard .side-label{
+    position:absolute;top:14px;left:18px;
+    font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-secondary);font-weight:700;
+  }
+  .flashcard .tap-hint{
+    position:absolute;bottom:14px;left:0;right:0;
+    font-size:12px;color:var(--text-secondary);font-weight:400;
+  }
+  .flashcard .back-divider{width:40px;height:2px;background:var(--accent);margin:0 auto 14px;border-radius:2px;}
+
+  .study-actions{display:flex;gap:12px;margin-top:20px;}
+  .study-actions .btn{flex:1;justify-content:center;padding:14px;font-size:15px;}
+  .study-controls{display:flex;justify-content:center;gap:10px;margin-top:16px;flex-wrap:wrap;}
+
+  .completion-box{text-align:center;padding:60px 20px;}
+  .completion-emoji{font-size:56px;margin-bottom:16px;}
+  .completion-title{font-size:24px;font-weight:800;margin-bottom:8px;}
+  .completion-stats{display:flex;justify-content:center;gap:28px;margin:26px 0;}
+  .completion-stat-num{font-size:28px;font-weight:800;}
+  .completion-stat-label{font-size:12.5px;color:var(--text-secondary);margin-top:2px;}
+
+  /* Import modal */
+  .dropzone{
+    border:2px dashed #33334a;border-radius:var(--radius-sm);
+    padding:22px;text-align:center;color:var(--text-secondary);
+    font-size:13.5px;cursor:pointer;transition:border-color .15s,background .15s;
+  }
+  .dropzone.dragover{border-color:var(--accent);background:var(--accent-dim);}
+  .delim-shortcuts{display:flex;gap:8px;margin-top:8px;}
+  .import-preview{
+    margin-top:14px;background:var(--surface2);border-radius:var(--radius-sm);
+    padding:12px;max-height:220px;overflow-y:auto;
+  }
+  .import-preview-summary{font-size:13.5px;font-weight:600;margin-bottom:8px;display:flex;gap:14px;}
+  .import-preview-row{
+    display:flex;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px solid #262638;
+  }
+  .import-preview-row:last-child{border-bottom:none;}
+  .import-preview-front{flex:1;color:var(--text);}
+  .import-preview-back{flex:1;color:var(--text-secondary);}
+  .import-invalid{color:var(--warning);font-size:12.5px;}
+
+  @media(max-width:480px){
+    .modal-box{padding:18px;}
+    .flashcard{min-height:220px;font-size:17px;padding:26px 18px;}
+    .study-actions .btn{padding:12px;font-size:14px;}
+  }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand" data-action="go-library"><span class="brand-dot"></span>MedCards</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="save-status" id="save-status"></span>
+      <span class="streak-badge" id="streak-badge" title="Dias seguidos estudando">🔥 0</span>
+      <button class="nav-link" id="owner-lock-btn" style="display:none;"></button>
+      <a class="nav-link" data-action="go-library">Biblioteca</a>
+    </div>
+  </div>
+</nav>
+<div id="app"></div>
+<div id="modal-root"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- Backend (Val Town) ---------------- */
+  const API_BASE = 'https://henry006original--8baf8222903311f1b9d11607ee4eb77e.web.val.run';
+  // 'private': this file's content lives in the private space, gated behind a PIN even to view.
+  // 'public': content is readable by anyone; only writes require the PIN.
+  const API_SPACE = 'public';
+
+  let ownerPin = sessionStorage.getItem('mc_owner_pin') || null;
+  let ownerMode = false;
+
+  async function apiGetPublic(){
+    const res = await fetch(API_BASE + '/public');
+    if(!res.ok) throw new Error('load failed');
+    return res.json();
+  }
+  async function apiReadPrivate(pin){
+    const res = await fetch(API_BASE + '/private/read', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})
+    });
+    if(res.status === 401){ const e = new Error('unauthorized'); e.code = 401; throw e; }
+    if(!res.ok) throw new Error('load failed');
+    return res.json();
+  }
+  async function apiVerifyPin(pin){
+    try{
+      const res = await fetch(API_BASE + '/verify-pin', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})
+      });
+      return res.ok;
+    }catch(e){ return false; }
+  }
+
+  const OWNER_ONLY_ACTIONS = new Set([
+    'new-modulo','edit-modulo','archive-modulo','restore-modulo','delete-modulo',
+    'new-discipline','edit-discipline','archive-discipline','restore-discipline','delete-discipline',
+    'new-aula','edit-aula','archive-aula','restore-aula','delete-aula',
+    'new-card','edit-card','archive-card','restore-card','delete-card',
+    'open-import','edit-study-card'
+  ]);
+
+  function updateOwnerLockBtn(){
+    const btn = document.getElementById('owner-lock-btn');
+    if(!btn) return;
+    if(API_SPACE !== 'public'){ btn.style.display = 'none'; return; }
+    btn.style.display = '';
+    btn.textContent = ownerMode ? '🔓 Sair' : '🔐 Entrar';
+    btn.title = ownerMode ? 'Sair do modo de edição' : 'Entrar como dono para editar';
+  }
+
+  function openPinModal(){
+    openModal(`
+      <div class="modal-title">🔐 Entrar como dono</div>
+      <p class="modal-danger-text">Digite o PIN para poder criar e editar conteúdo. Sem o PIN, só dá para navegar e estudar.</p>
+      <div class="form-group">
+        <label class="form-label">PIN</label>
+        <input type="password" id="f-pin" placeholder="Digite o PIN">
+      </div>
+      <p class="modal-danger-text" id="pin-error" style="display:none;color:var(--danger);">PIN incorreto.</p>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="confirm-pin-btn">Entrar</button>
+      </div>
+    `);
+    const input = document.getElementById('f-pin');
+    input.focus();
+    const errorEl = document.getElementById('pin-error');
+    async function trySubmit(){
+      const val = input.value;
+      if(!val) return;
+      const ok = await apiVerifyPin(val);
+      if(ok){
+        ownerPin = val;
+        sessionStorage.setItem('mc_owner_pin', val);
+        ownerMode = true;
+        updateOwnerLockBtn();
+        closeModal();
+        render();
+      }else{
+        errorEl.style.display = '';
+        input.value = '';
+        input.focus();
+      }
+    }
+    document.getElementById('confirm-pin-btn').addEventListener('click', trySubmit);
+    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter') trySubmit(); });
+  }
+
+  function renderPinGate(errorMsg){
+    appEl.innerHTML = `<div class="empty-state">
+      <span class="emoji">🔒</span>
+      <h3>Conteúdo privado</h3>
+      <p>Digite o PIN para acessar.</p>
+      <div class="form-group" style="max-width:280px;margin:0 auto 14px;text-align:left;">
+        <input type="password" id="gate-pin" placeholder="PIN" style="text-align:center;">
+      </div>
+      ${errorMsg ? `<p style="color:var(--danger);font-size:13px;margin-bottom:14px;">${escapeHtml(errorMsg)}</p>` : ''}
+      <button class="btn btn-primary" id="gate-submit">Entrar</button>
+    </div>`;
+    const input = document.getElementById('gate-pin');
+    input.focus();
+    const submit = ()=>{
+      const val = input.value;
+      if(!val) return;
+      ownerPin = val;
+      sessionStorage.setItem('mc_owner_pin', val);
+      initApp();
+    };
+    document.getElementById('gate-submit').addEventListener('click', submit);
+    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter') submit(); });
+  }
+
+  function showLoading(msg){
+    appEl.innerHTML = `<div class="empty-state"><span class="emoji">⏳</span><p>${escapeHtml(msg||'Carregando…')}</p></div>`;
+  }
+  function showLoadError(msg){
+    appEl.innerHTML = `<div class="empty-state">
+      <span class="emoji">⚠️</span>
+      <h3>Não foi possível carregar</h3>
+      <p>${escapeHtml(msg)}</p>
+      <button class="btn btn-primary" id="retry-load-btn">Tentar de novo</button>
+    </div>`;
+    document.getElementById('retry-load-btn').addEventListener('click', initApp);
+  }
+
+  async function initApp(){
+    showLoading();
+    if(API_SPACE === 'private' && !ownerPin){
+      renderPinGate();
+      return;
+    }
+    try{
+      let data;
+      if(API_SPACE === 'private'){
+        data = await apiReadPrivate(ownerPin);
+        ownerMode = true;
+      }else{
+        data = await apiGetPublic();
+        ownerMode = false;
+        if(ownerPin){
+          const ok = await apiVerifyPin(ownerPin);
+          if(ok) ownerMode = true;
+          else { ownerPin = null; sessionStorage.removeItem('mc_owner_pin'); }
+        }
+      }
+      state.modulos = Array.isArray(data.modulos) ? data.modulos : [];
+      applyLocalProgress(state.modulos);
+      state.streak = loadLocalStreak();
+      view = { type:'library' };
+      render();
+    }catch(err){
+      if(err && err.code === 401){
+        ownerPin = null;
+        sessionStorage.removeItem('mc_owner_pin');
+        if(API_SPACE === 'private'){ renderPinGate('PIN incorreto.'); return; }
+      }
+      showLoadError('Verifique sua conexão com a internet e tente de novo.');
+    }
+  }
+
+  /* ---------------- State (content lives on the server; only per-device study progress is local) ---------------- */
+  // Hierarquia: Módulo (ex: SAI) -> Disciplina (ex: Otorrino) -> Aula -> Card
+  let state = { modulos: [], streak: { count: 0, lastDate: null } };
+
+  function uid(){
+    return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10);
+  }
+
+  function loadLocalProgress(){
+    try{ return JSON.parse(localStorage.getItem('mc_progress')) || {}; }catch(e){ return {}; }
+  }
+  let localProgress = loadLocalProgress();
+  function saveLocalProgress(){ localStorage.setItem('mc_progress', JSON.stringify(localProgress)); }
+  function applyLocalProgress(modulos){
+    modulos.forEach(m=>m.disciplinas.forEach(d=>d.aulas.forEach(a=>a.cards.forEach(c=>{
+      const p = localProgress[c.id];
+      c.lastResult = p ? p.lastResult : null;
+      c.lastStudiedAt = p ? p.lastStudiedAt : null;
+    }))));
+  }
+  function setCardProgress(cardId, lastResult, lastStudiedAt){
+    if(lastResult == null) delete localProgress[cardId];
+    else localProgress[cardId] = { lastResult, lastStudiedAt };
+    saveLocalProgress();
+  }
+
+  function loadLocalStreak(){
+    try{ return JSON.parse(localStorage.getItem('mc_streak')) || { count:0, lastDate:null }; }catch(e){ return { count:0, lastDate:null }; }
+  }
+  function saveLocalStreak(){ localStorage.setItem('mc_streak', JSON.stringify(state.streak)); }
+
+  function setSaveStatus(text, isError){
+    const el = document.getElementById('save-status');
+    if(!el) return;
+    el.textContent = text;
+    el.style.color = isError ? 'var(--danger)' : 'var(--text-secondary)';
+    clearTimeout(setSaveStatus._t);
+    if(text){
+      setSaveStatus._t = setTimeout(()=>{ if(el.textContent===text) el.textContent=''; }, isError?4000:1500);
+    }
+  }
+
+  // Coalescing save queue: rapid consecutive edits must never race over the
+  // network and let a stale snapshot overwrite a newer one. At most one
+  // request is ever in flight; each send captures state.modulos fresh at the
+  // moment it actually goes out, and any edits queued up while a request was
+  // in flight trigger exactly one more send with the latest state.
+  let saveInFlight = false;
+  let saveQueued = false;
+
+  function saveContent(){
+    saveQueued = true;
+    if(saveInFlight) return;
+    saveInFlight = true;
+    (async()=>{
+      while(saveQueued){
+        saveQueued = false;
+        await performSave();
+      }
+      saveInFlight = false;
+    })();
+  }
+
+  async function performSave(){
+    setSaveStatus('Salvando…');
+    try{
+      const cleanModulos = JSON.parse(JSON.stringify(state.modulos));
+      cleanModulos.forEach(m=>m.disciplinas.forEach(d=>d.aulas.forEach(a=>a.cards.forEach(c=>{
+        c.lastResult = null; c.lastStudiedAt = null;
+      }))));
+      const path = API_SPACE === 'public' ? '/public' : '/private/save';
+      const res = await fetch(API_BASE + path, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pin: ownerPin, data: { modulos: cleanModulos } })
+      });
+      if(res.status === 401){
+        setSaveStatus('⚠️ PIN inválido', true);
+        ownerMode = false; ownerPin = null; sessionStorage.removeItem('mc_owner_pin');
+        if(API_SPACE === 'private'){ renderPinGate('Sessão expirada — digite o PIN novamente.'); }
+        else{ updateOwnerLockBtn(); render(); }
+        return;
+      }
+      if(!res.ok) throw new Error('save failed');
+      setSaveStatus('✓ Salvo');
+    }catch(err){
+      setSaveStatus('⚠️ Falha ao salvar — verifique a internet', true);
+    }
+  }
+
+  /* ---------------- Helpers ---------------- */
+  function shuffle(arr){
+    const a = arr.slice();
+    for(let i=a.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i],a[j]]=[a[j],a[i]];
+    }
+    return a;
+  }
+
+  /* ---------------- Streak ---------------- */
+  function pad2(n){ return n<10 ? '0'+n : ''+n; }
+  function todayStr(){
+    const d = new Date();
+    return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+  }
+  function dateOnly(str){
+    const [y,m,d] = str.split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  function daysBetween(fromStr, toStr){
+    return Math.round((dateOnly(toStr) - dateOnly(fromStr)) / 86400000);
+  }
+  function getDisplayStreak(){
+    const s = state.streak;
+    if(!s || !s.lastDate) return 0;
+    const diff = daysBetween(s.lastDate, todayStr());
+    if(diff >= 2) return 0;
+    return s.count;
+  }
+  function registerStudyCompletion(){
+    const today = todayStr();
+    const s = state.streak;
+    if(s.lastDate === today) return; // already counted today
+    if(s.lastDate){
+      const diff = daysBetween(s.lastDate, today);
+      s.count = (diff === 1) ? s.count + 1 : 1;
+    }else{
+      s.count = 1;
+    }
+    s.lastDate = today;
+    saveLocalStreak();
+  }
+  function renderStreakBadge(){
+    const el = document.getElementById('streak-badge');
+    if(!el) return;
+    const n = getDisplayStreak();
+    el.textContent = '🔥 ' + n;
+    el.classList.toggle('active', n > 0);
+  }
+
+  function escapeHtml(str){
+    return String(str==null?'':str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function getModulo(id){ return state.modulos.find(m=>m.id===id); }
+  function findDiscipline(disciplineId){
+    for(const m of state.modulos){
+      const d = m.disciplinas.find(x=>x.id===disciplineId);
+      if(d) return {modulo:m, discipline:d};
+    }
+    return null;
+  }
+  function findAula(aulaId){
+    for(const m of state.modulos){
+      for(const d of m.disciplinas){
+        const a = d.aulas.find(x=>x.id===aulaId);
+        if(a) return {modulo:m, discipline:d, aula:a};
+      }
+    }
+    return null;
+  }
+  function findCard(cardId){
+    for(const m of state.modulos){
+      for(const d of m.disciplinas){
+        for(const a of d.aulas){
+          const c = a.cards.find(x=>x.id===cardId);
+          if(c) return {modulo:m, discipline:d, aula:a, card:c};
+        }
+      }
+    }
+    return null;
+  }
+
+  /* ---------------- View / navigation state ---------------- */
+  // {type:'library'} | {type:'modulo',id} | {type:'discipline',id} | {type:'aula',id} | {type:'study',aulaId}
+  let view = { type:'library' };
+  const uiState = { openArchives: {} }; // key -> bool
+
+  function goLibrary(){ view = {type:'library'}; render(); }
+  function goModulo(id){ view = {type:'modulo', id}; render(); }
+  function goDiscipline(id){ view = {type:'discipline', id}; render(); }
+  function goAula(id){ view = {type:'aula', id}; render(); }
+
+  let session = null; // active study session object
+
+  /* ---------------- Modal ---------------- */
+  const modalRoot = document.getElementById('modal-root');
+  let pendingConfirmAction = null;
+
+  function closeModal(){
+    modalRoot.innerHTML = '';
+    pendingConfirmAction = null;
+  }
+
+  function openModal(html){
+    modalRoot.innerHTML = `<div class="modal-overlay" data-action="modal-overlay-click">
+      <div class="modal-box" data-modal-box>${html}</div>
+    </div>`;
+    modalRoot.querySelector('.modal-overlay').addEventListener('mousedown', (e)=>{
+      if(e.target.classList.contains('modal-overlay')) closeModal();
+    });
+  }
+
+  /* ---------- Módulo / Disciplina modal (shared: both have nome + emoji + cor) ---------- */
+  const EMOJI_PRESETS = ['📁','🩺','🏥','🚑','❤️','🧠','🦴','🦵','💪','💊','💉','🔬','🧬','🧫','🧪','🔍','📊','📚','🦠','😷','👁️','👓','👂','👃','🦷','🌡️','🩸','🩹','🧴','👶','🧒','🤰','🌸','🧓','🛋️','💭','🗣️','🏘️','🤝','📋','🌱','📢'];
+  const COLOR_PRESETS = ['#6366f1','#4f46e5','#3b82f6','#1d4ed8','#0ea5e9','#0284c7','#06b6d4','#0891b2','#14b8a6','#0f766e','#22c55e','#15803d','#84cc16','#4d7c0f','#eab308','#ca8a04','#f59e0b','#f97316','#c2410c','#ef4444','#b91c1c','#f43f5e','#be123c','#ec4899','#db2777','#f472b6','#c026d3','#a21caf','#8b5cf6','#7c3aed','#94a3b8','#475569'];
+
+  function openEntityModal(opts){
+    // opts: {titleCreate, titleEdit, existing, placeholderName, onSave(nameVal,emojiVal,colorVal,isEdit)}
+    const isEdit = !!opts.existing;
+    const name = isEdit ? opts.existing.name : '';
+    const emoji = isEdit ? opts.existing.emoji : EMOJI_PRESETS[0];
+    const color = isEdit ? opts.existing.color : COLOR_PRESETS[0];
+
+    openModal(`
+      <div class="modal-title">${isEdit ? opts.titleEdit : opts.titleCreate}</div>
+      <div class="form-group">
+        <label class="form-label">Nome</label>
+        <input type="text" id="f-name" placeholder="${escapeHtml(opts.placeholderName||'')}" value="${escapeHtml(name)}" maxlength="60">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Emoji</label>
+        <input type="text" id="f-emoji" value="${escapeHtml(emoji)}" maxlength="4" style="width:70px;text-align:center;font-size:20px;">
+        <div class="emoji-grid" id="emoji-grid">
+          ${EMOJI_PRESETS.map(e=>`<button class="emoji-choice${e===emoji?' selected':''}" data-emoji="${e}" type="button">${e}</button>`).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cor de destaque</label>
+        <input type="color" id="f-color" value="${color}" style="width:60px;height:38px;padding:2px;">
+        <div class="color-grid" id="color-grid">
+          ${COLOR_PRESETS.map(c=>`<button class="color-choice${c===color?' selected':''}" data-color="${c}" style="background:${c}" type="button"></button>`).join('')}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="save-entity-btn">${isEdit?'Salvar':'Criar'}</button>
+      </div>
+    `);
+
+    const emojiInput = document.getElementById('f-emoji');
+    const colorInput = document.getElementById('f-color');
+    document.getElementById('emoji-grid').addEventListener('click', (e)=>{
+      const btn = e.target.closest('.emoji-choice');
+      if(!btn) return;
+      emojiInput.value = btn.dataset.emoji;
+      document.querySelectorAll('#emoji-grid .emoji-choice').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    document.getElementById('color-grid').addEventListener('click', (e)=>{
+      const btn = e.target.closest('.color-choice');
+      if(!btn) return;
+      colorInput.value = btn.dataset.color;
+      document.querySelectorAll('#color-grid .color-choice').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+
+    document.getElementById('save-entity-btn').addEventListener('click', ()=>{
+      const nameVal = document.getElementById('f-name').value.trim();
+      if(!nameVal){ document.getElementById('f-name').focus(); return; }
+      const emojiVal = emojiInput.value.trim() || '📁';
+      const colorVal = colorInput.value;
+      opts.onSave(nameVal, emojiVal, colorVal, isEdit);
+      saveContent(); closeModal(); render();
+    });
+  }
+
+  function openModuloModal(existing){
+    openEntityModal({
+      titleCreate: 'Novo módulo', titleEdit: 'Editar módulo', existing,
+      placeholderName: 'Ex: SAI',
+      onSave: (nameVal, emojiVal, colorVal, isEdit)=>{
+        if(isEdit){
+          existing.name = nameVal; existing.emoji = emojiVal; existing.color = colorVal;
+        }else{
+          state.modulos.push({ id: uid(), name: nameVal, emoji: emojiVal, color: colorVal, archived:false, disciplinas:[] });
+        }
+      }
+    });
+  }
+
+  function openDisciplinaModal(modulo, existing){
+    openEntityModal({
+      titleCreate: 'Nova disciplina', titleEdit: 'Editar disciplina', existing,
+      placeholderName: 'Ex: Otorrinolaringologia',
+      onSave: (nameVal, emojiVal, colorVal, isEdit)=>{
+        if(isEdit){
+          existing.name = nameVal; existing.emoji = emojiVal; existing.color = colorVal;
+        }else{
+          modulo.disciplinas.push({ id: uid(), name: nameVal, emoji: emojiVal, color: colorVal, archived:false, aulas:[] });
+        }
+      }
+    });
+  }
+
+  /* ---------- Aula modal ---------- */
+  function openAulaModal(discipline, existing){
+    const isEdit = !!existing;
+    openModal(`
+      <div class="modal-title">${isEdit?'Editar aula':'Nova aula'}</div>
+      <div class="form-group">
+        <label class="form-label">Nome da aula</label>
+        <input type="text" id="f-aula-name" placeholder="Ex: Arritmias cardíacas" value="${escapeHtml(existing?existing.name:'')}" maxlength="80">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="save-aula-btn">${isEdit?'Salvar':'Criar'}</button>
+      </div>
+    `);
+    const input = document.getElementById('f-aula-name');
+    input.focus();
+    document.getElementById('save-aula-btn').addEventListener('click', ()=>{
+      const nameVal = input.value.trim();
+      if(!nameVal){ input.focus(); return; }
+      if(isEdit){
+        existing.name = nameVal;
+      }else{
+        discipline.aulas.push({ id: uid(), name: nameVal, archived:false, cards:[] });
+      }
+      saveContent(); closeModal(); render();
+    });
+  }
+
+  /* ---------- Card modal ---------- */
+  function openCardModal(aula, existing, opts){
+    opts = opts || {};
+    const isEdit = !!existing;
+    openModal(`
+      <div class="modal-title">${isEdit?'Editar card':'Novo card'}</div>
+      <div class="form-group">
+        <label class="form-label">Frente (pergunta)</label>
+        <textarea id="f-card-front" rows="3" placeholder="Ex: Qual a tríade de Virchow?">${escapeHtml(existing?existing.front:'')}</textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Verso (resposta)</label>
+        <textarea id="f-card-back" rows="4" placeholder="Ex: Estase venosa, lesão endotelial e hipercoagulabilidade">${escapeHtml(existing?existing.back:'')}</textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="save-card-btn">${isEdit?'Salvar':'Criar'}</button>
+      </div>
+    `);
+    document.getElementById('f-card-front').focus();
+    document.getElementById('save-card-btn').addEventListener('click', ()=>{
+      const front = document.getElementById('f-card-front').value.trim();
+      const back = document.getElementById('f-card-back').value.trim();
+      if(!front || !back) return;
+      if(isEdit){
+        existing.front = front; existing.back = back;
+      }else{
+        aula.cards.push({ id: uid(), front, back, archived:false, lastResult:null, lastStudiedAt:null });
+      }
+      saveContent(); closeModal();
+      if(opts.onSaved) opts.onSaved(); else render();
+    });
+  }
+
+  /* ---------- Confirm delete modal ---------- */
+  function openConfirmModal(message, onConfirm){
+    pendingConfirmAction = onConfirm;
+    openModal(`
+      <div class="modal-title">Excluir permanentemente?</div>
+      <p class="modal-danger-text">${message}</p>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-danger" id="confirm-delete-btn">Excluir</button>
+      </div>
+    `);
+    document.getElementById('confirm-delete-btn').addEventListener('click', ()=>{
+      if(pendingConfirmAction) pendingConfirmAction();
+      closeModal(); render();
+    });
+  }
+
+  /* ---------- Import modal ---------- */
+  function openImportModal(aula){
+    openModal(`
+      <div class="modal-title">Importar cards em massa</div>
+      <div class="form-group">
+        <label class="form-label">Delimitador</label>
+        <input type="text" id="f-delim" value="::" style="width:100px;">
+        <div class="delim-shortcuts">
+          <button class="btn btn-sm btn-ghost" data-delim="\t" type="button">Tab</button>
+          <button class="btn btn-sm btn-ghost" data-delim=";" type="button">;</button>
+          <button class="btn btn-sm btn-ghost" data-delim="|" type="button">|</button>
+          <button class="btn btn-sm btn-ghost" data-delim="::" type="button">::</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Colar texto (um par por linha: Pergunta::Resposta)</label>
+        <textarea id="f-import-text" rows="6" placeholder="Pergunta 1::Resposta 1&#10;Pergunta 2::Resposta 2"></textarea>
+      </div>
+      <div class="form-group">
+        <div class="dropzone" id="dropzone">
+          📄 Arraste um arquivo .txt aqui ou clique para escolher
+          <input type="file" id="f-file" accept=".txt" style="display:none;">
+        </div>
+      </div>
+      <div class="import-preview" id="import-preview"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="confirm-import-btn" disabled>Importar cards</button>
+      </div>
+    `);
+
+    const textArea = document.getElementById('f-import-text');
+    const delimInput = document.getElementById('f-delim');
+    const previewBox = document.getElementById('import-preview');
+    const confirmBtn = document.getElementById('confirm-import-btn');
+    let currentValid = [];
+
+    function updatePreview(){
+      const text = textArea.value;
+      let delim = delimInput.value;
+      if(delim === '') delim = '::';
+      const lines = text.split(/\r?\n/);
+      const valid = [];
+      const invalid = [];
+      lines.forEach((line, idx)=>{
+        if(line.trim()==='') return;
+        const parts = line.split(delim);
+        if(parts.length >= 2){
+          const front = parts[0].trim();
+          const back = parts.slice(1).join(delim).trim();
+          if(front && back){ valid.push({front,back}); return; }
+        }
+        invalid.push({num: idx+1, line});
+      });
+      currentValid = valid;
+      confirmBtn.disabled = valid.length === 0;
+      let html = `<div class="import-preview-summary"><span style="color:var(--success)">${valid.length} card(s) detectado(s)</span>${invalid.length?`<span class="import-invalid">${invalid.length} linha(s) ignorada(s)</span>`:''}</div>`;
+      valid.slice(0,50).forEach(c=>{
+        html += `<div class="import-preview-row"><div class="import-preview-front">${escapeHtml(c.front)}</div><div class="import-preview-back">${escapeHtml(c.back)}</div></div>`;
+      });
+      if(invalid.length){
+        html += invalid.slice(0,10).map(l=>`<div class="import-invalid">Linha ${l.num} ignorada: "${escapeHtml(l.line.slice(0,60))}"</div>`).join('');
+      }
+      previewBox.innerHTML = html;
+    }
+
+    textArea.addEventListener('input', updatePreview);
+    delimInput.addEventListener('input', updatePreview);
+    document.querySelectorAll('[data-delim]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        delimInput.value = btn.dataset.delim === '\t' ? '\t' : btn.dataset.delim;
+        updatePreview();
+      });
+    });
+
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('f-file');
+    dropzone.addEventListener('click', ()=>fileInput.click());
+    fileInput.addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if(file) readTextFile(file);
+    });
+    dropzone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e)=>{
+      e.preventDefault(); dropzone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if(file) readTextFile(file);
+    });
+    function readTextFile(file){
+      const reader = new FileReader();
+      reader.onload = (ev)=>{
+        textArea.value = ev.target.result;
+        updatePreview();
+      };
+      reader.readAsText(file);
+    }
+
+    updatePreview();
+
+    confirmBtn.addEventListener('click', ()=>{
+      if(currentValid.length===0) return;
+      currentValid.forEach(c=>{
+        aula.cards.push({ id: uid(), front:c.front, back:c.back, archived:false, lastResult:null, lastStudiedAt:null });
+      });
+      saveContent(); closeModal(); render();
+    });
+  }
+
+  /* ---------- Export modal ---------- */
+  function buildExportText(cards, delim){
+    return cards.map(c=>{
+      const front = c.front.replace(/\r?\n/g,' ');
+      const back = c.back.replace(/\r?\n/g,' ');
+      return front + delim + back;
+    }).join('\n');
+  }
+
+  function openExportModal(cards, label){
+    openModal(`
+      <div class="modal-title">⇩ Exportar cards</div>
+      <p class="modal-danger-text">${cards.length} card${cards.length===1?'':'s'} no formato Pergunta[delimitador]Resposta, um por linha. Ajuste o delimitador conforme o app de destino (ex: Noji Cards).</p>
+      <div class="form-group">
+        <label class="form-label">Delimitador</label>
+        <input type="text" id="f-export-delim" value="::" style="width:100px;">
+        <div class="delim-shortcuts">
+          <button class="btn btn-sm btn-ghost" data-delim="\t" type="button">Tab</button>
+          <button class="btn btn-sm btn-ghost" data-delim=";" type="button">;</button>
+          <button class="btn btn-sm btn-ghost" data-delim="|" type="button">|</button>
+          <button class="btn btn-sm btn-ghost" data-delim="::" type="button">::</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <textarea id="export-text" rows="10" readonly style="font-size:12.5px;">${escapeHtml(buildExportText(cards,'::'))}</textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Fechar</button>
+        <button class="btn btn-ghost" id="download-export-btn" ${cards.length===0?'disabled':''}>⬇️ Baixar .txt</button>
+        <button class="btn btn-primary" id="copy-export-btn" ${cards.length===0?'disabled':''}>📋 Copiar</button>
+      </div>
+    `);
+
+    const delimInput = document.getElementById('f-export-delim');
+    const textArea = document.getElementById('export-text');
+    function refreshText(){
+      let delim = delimInput.value;
+      if(delim === '') delim = '::';
+      textArea.value = buildExportText(cards, delim);
+    }
+    delimInput.addEventListener('input', refreshText);
+    document.querySelectorAll('#modal-root [data-delim]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        delimInput.value = btn.dataset.delim === '\t' ? '\t' : btn.dataset.delim;
+        refreshText();
+      });
+    });
+
+    const downloadBtn = document.getElementById('download-export-btn');
+    downloadBtn.addEventListener('click', ()=>{
+      const blob = new Blob([textArea.value], {type:'text/plain;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (label||'flashcards').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\w\-]+/g,'_') + '.txt';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    const copyBtn = document.getElementById('copy-export-btn');
+    copyBtn.addEventListener('click', ()=>{
+      textArea.focus(); textArea.select();
+      const done = ()=>{
+        copyBtn.textContent = '✓ Copiado!';
+        setTimeout(()=>{ if(copyBtn) copyBtn.textContent = '📋 Copiar'; }, 1500);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(textArea.value).then(done).catch(()=>{ document.execCommand('copy'); done(); });
+      }else{
+        document.execCommand('copy'); done();
+      }
+    });
+  }
+
+  /* ---------------- Rendering ---------------- */
+  const appEl = document.getElementById('app');
+
+  function render(){
+    if(view.type==='library') renderLibrary();
+    else if(view.type==='modulo') renderModuloView();
+    else if(view.type==='discipline') renderDisciplineView();
+    else if(view.type==='aula') renderAulaView();
+    else if(view.type==='study') renderStudyView();
+    renderStreakBadge();
+    updateOwnerLockBtn();
+  }
+
+  function renderBreadcrumb(parts){
+    // parts: [{label, action}], last one is current (non-clickable)
+    let html = '<div class="breadcrumb">';
+    parts.forEach((p,i)=>{
+      if(i>0) html += '<span class="sep">/</span>';
+      if(i===parts.length-1){
+        html += `<span class="current">${escapeHtml(p.label)}</span>`;
+      }else{
+        html += `<button data-action="${p.action}">${escapeHtml(p.label)}</button>`;
+      }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function renderLibrary(){
+    const active = state.modulos.filter(m=>!m.archived);
+    const archived = state.modulos.filter(m=>m.archived);
+
+    let html = renderBreadcrumb([{label:'Biblioteca'}]);
+    html += `<h1 class="page-title">Biblioteca</h1><p class="page-sub">Seus módulos de estudo</p>`;
+    if(ownerMode){
+      html += `<div class="toolbar"><button class="btn btn-primary" data-action="new-modulo">+ Novo módulo</button></div>`;
+    }
+
+    if(active.length===0 && archived.length===0){
+      html += `<div class="empty-state">
+        <span class="emoji">📁</span>
+        <h3>Nenhum módulo ainda</h3>
+        <p>${ownerMode ? 'Crie seu primeiro módulo (ex: SAI) para organizar as disciplinas dentro dele.' : 'Ainda não há nada para estudar aqui.'}</p>
+        ${ownerMode ? `<button class="btn btn-primary" data-action="new-modulo">+ Novo módulo</button>` : ''}
+      </div>`;
+    }else{
+      html += '<div class="card-list">';
+      if(active.length===0){
+        html += `<div class="empty-state" style="padding:24px;"><p>Todos os módulos estão arquivados.</p></div>`;
+      }
+      active.forEach(m=>{
+        html += moduloRow(m,false);
+      });
+      html += '</div>';
+
+      if(ownerMode && archived.length>0){
+        const open = !!uiState.openArchives['lib'];
+        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="lib"><span class="chev">▶</span> Arquivados (${archived.length})</button>`;
+        if(open){
+          html += '<div class="archive-section">';
+          archived.forEach(m=>{ html += moduloRow(m,true); });
+          html += '</div>';
+        }
+      }
+    }
+    appEl.innerHTML = html;
+  }
+
+  function moduloRow(m, archived){
+    const discCount = m.disciplinas.filter(d=>!d.archived).length;
+    return `<div class="item-row${archived?' archived-row':''}">
+      <div class="accent-bar" style="background:${m.color}"></div>
+      <div class="item-main" data-action="${archived?'noop':'open-modulo'}" data-id="${m.id}">
+        <div class="item-emoji" style="background:${m.color};box-shadow:0 2px 8px ${m.color}55;">${m.emoji}</div>
+        <div class="item-text">
+          <div class="item-title">${escapeHtml(m.name)}</div>
+          <div class="item-meta">${discCount} disciplina${discCount===1?'':'s'}</div>
+        </div>
+      </div>
+      ${ownerMode ? `<div class="item-actions">
+        ${archived
+          ? `<button class="btn btn-sm btn-ghost" data-action="restore-modulo" data-id="${m.id}">Restaurar</button>
+             <button class="btn btn-sm btn-danger" data-action="delete-modulo" data-id="${m.id}">Excluir</button>`
+          : `<button class="btn-icon" data-action="edit-modulo" data-id="${m.id}" title="Editar">✏️</button>
+             <button class="btn-icon" data-action="archive-modulo" data-id="${m.id}" title="Arquivar">🗄️</button>
+             <button class="btn-icon" data-action="delete-modulo" data-id="${m.id}" title="Excluir permanentemente">🗑️</button>`
+        }
+      </div>` : ''}
+    </div>`;
+  }
+
+  function renderModuloView(){
+    const m = getModulo(view.id);
+    if(!m){ goLibrary(); return; }
+    const active = m.disciplinas.filter(d=>!d.archived);
+    const archived = m.disciplinas.filter(d=>d.archived);
+
+    let html = renderBreadcrumb([
+      {label:'Biblioteca', action:'go-library'},
+      {label:m.name}
+    ]);
+    html += `<h1 class="page-title">${m.emoji} ${escapeHtml(m.name)}</h1><p class="page-sub">${active.length} disciplina${active.length===1?'':'s'}</p>`;
+    html += `<div class="toolbar">
+      ${ownerMode ? `<button class="btn btn-primary" data-action="new-discipline">+ Nova disciplina</button>
+      <button class="btn btn-ghost" data-action="edit-modulo" data-id="${m.id}">Editar módulo</button>` : ''}
+      <button class="btn btn-ghost" data-action="export-modulo" data-id="${m.id}">⇩ Exportar tudo</button>
+    </div>`;
+
+    if(active.length===0 && archived.length===0){
+      html += `<div class="empty-state">
+        <span class="emoji">📚</span>
+        <h3>Nenhuma disciplina ainda</h3>
+        <p>${ownerMode ? 'Adicione a primeira disciplina deste módulo (ex: Otorrino, Oftalmo).' : 'Ainda não há nada para estudar aqui.'}</p>
+        ${ownerMode ? `<button class="btn btn-primary" data-action="new-discipline">+ Nova disciplina</button>` : ''}
+      </div>`;
+    }else{
+      html += '<div class="card-list">';
+      if(active.length===0){
+        html += `<div class="empty-state" style="padding:24px;"><p>Todas as disciplinas estão arquivadas.</p></div>`;
+      }
+      active.forEach(d=>{ html += disciplineRow(d,false); });
+      html += '</div>';
+
+      if(ownerMode && archived.length>0){
+        const open = !!uiState.openArchives['mod_'+m.id];
+        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="mod_${m.id}"><span class="chev">▶</span> Arquivadas (${archived.length})</button>`;
+        if(open){
+          html += '<div class="archive-section">';
+          archived.forEach(d=>{ html += disciplineRow(d,true); });
+          html += '</div>';
+        }
+      }
+    }
+    appEl.innerHTML = html;
+  }
+
+  function disciplineRow(d, archived){
+    const aulaCount = d.aulas.filter(a=>!a.archived).length;
+    return `<div class="item-row${archived?' archived-row':''}">
+      <div class="accent-bar" style="background:${d.color}"></div>
+      <div class="item-main" data-action="${archived?'noop':'open-discipline'}" data-id="${d.id}">
+        <div class="item-emoji" style="background:${d.color}22;">${d.emoji}</div>
+        <div class="item-text">
+          <div class="item-title">${escapeHtml(d.name)}</div>
+          <div class="item-meta">${aulaCount} aula${aulaCount===1?'':'s'}</div>
+        </div>
+      </div>
+      ${ownerMode ? `<div class="item-actions">
+        ${archived
+          ? `<button class="btn btn-sm btn-ghost" data-action="restore-discipline" data-id="${d.id}">Restaurar</button>
+             <button class="btn btn-sm btn-danger" data-action="delete-discipline" data-id="${d.id}">Excluir</button>`
+          : `<button class="btn-icon" data-action="edit-discipline" data-id="${d.id}" title="Editar">✏️</button>
+             <button class="btn-icon" data-action="archive-discipline" data-id="${d.id}" title="Arquivar">🗄️</button>
+             <button class="btn-icon" data-action="delete-discipline" data-id="${d.id}" title="Excluir permanentemente">🗑️</button>`
+        }
+      </div>` : ''}
+    </div>`;
+  }
+
+  function renderDisciplineView(){
+    const found = findDiscipline(view.id);
+    if(!found){ goLibrary(); return; }
+    const {modulo:m, discipline:d} = found;
+    const active = d.aulas.filter(a=>!a.archived);
+    const archived = d.aulas.filter(a=>a.archived);
+
+    let html = renderBreadcrumb([
+      {label:'Biblioteca', action:'go-library'},
+      {label:m.name, action:'open-modulo-'+m.id},
+      {label:d.name}
+    ]);
+    html += `<h1 class="page-title">${d.emoji} ${escapeHtml(d.name)}</h1><p class="page-sub">${active.length} aula${active.length===1?'':'s'}</p>`;
+    html += `<div class="toolbar">
+      ${ownerMode ? `<button class="btn btn-primary" data-action="new-aula">+ Nova aula</button>
+      <button class="btn btn-ghost" data-action="edit-discipline" data-id="${d.id}">Editar disciplina</button>` : ''}
+      <button class="btn btn-ghost" data-action="export-discipline" data-id="${d.id}">⇩ Exportar tudo</button>
+    </div>`;
+
+    if(active.length===0 && archived.length===0){
+      html += `<div class="empty-state">
+        <span class="emoji">📖</span>
+        <h3>Nenhuma aula ainda</h3>
+        <p>${ownerMode ? 'Adicione a primeira aula desta disciplina.' : 'Ainda não há nada para estudar aqui.'}</p>
+        ${ownerMode ? `<button class="btn btn-primary" data-action="new-aula">+ Nova aula</button>` : ''}
+      </div>`;
+    }else{
+      html += '<div class="card-list">';
+      if(active.length===0){
+        html += `<div class="empty-state" style="padding:24px;"><p>Todas as aulas estão arquivadas.</p></div>`;
+      }
+      active.forEach(a=>{ html += aulaRow(a,false); });
+      html += '</div>';
+
+      if(ownerMode && archived.length>0){
+        const open = !!uiState.openArchives['disc_'+d.id];
+        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="disc_${d.id}"><span class="chev">▶</span> Arquivadas (${archived.length})</button>`;
+        if(open){
+          html += '<div class="archive-section">';
+          archived.forEach(a=>{ html += aulaRow(a,true); });
+          html += '</div>';
+        }
+      }
+    }
+    appEl.innerHTML = html;
+  }
+
+  function aulaRow(a, archived){
+    const cardCount = a.cards.filter(c=>!c.archived).length;
+    return `<div class="item-row${archived?' archived-row':''}">
+      <div class="item-main" data-action="${archived?'noop':'open-aula'}" data-id="${a.id}">
+        <div class="item-emoji" style="background:var(--accent-dim);">📘</div>
+        <div class="item-text">
+          <div class="item-title">${escapeHtml(a.name)}</div>
+          <div class="item-meta">${cardCount} card${cardCount===1?'':'s'}</div>
+        </div>
+      </div>
+      ${ownerMode ? `<div class="item-actions">
+        ${archived
+          ? `<button class="btn btn-sm btn-ghost" data-action="restore-aula" data-id="${a.id}">Restaurar</button>
+             <button class="btn btn-sm btn-danger" data-action="delete-aula" data-id="${a.id}">Excluir</button>`
+          : `<button class="btn-icon" data-action="edit-aula" data-id="${a.id}" title="Editar">✏️</button>
+             <button class="btn-icon" data-action="archive-aula" data-id="${a.id}" title="Arquivar">🗄️</button>
+             <button class="btn-icon" data-action="delete-aula" data-id="${a.id}" title="Excluir permanentemente">🗑️</button>`
+        }
+      </div>` : ''}
+    </div>`;
+  }
+
+  function renderAulaView(){
+    const found = findAula(view.id);
+    if(!found){ goLibrary(); return; }
+    const {modulo:m, discipline:d, aula:a} = found;
+    const active = a.cards.filter(c=>!c.archived);
+    const archived = a.cards.filter(c=>c.archived);
+
+    let html = renderBreadcrumb([
+      {label:'Biblioteca', action:'go-library'},
+      {label:m.name, action:'open-modulo-'+m.id},
+      {label:d.name, action:'open-discipline-'+d.id},
+      {label:a.name}
+    ]);
+    html += `<h1 class="page-title">${escapeHtml(a.name)}</h1><p class="page-sub">${active.length} card${active.length===1?'':'s'} ativo${active.length===1?'':'s'}</p>`;
+    html += `<div class="toolbar">
+      <button class="btn btn-success" data-action="start-study" data-id="${a.id}" ${active.length===0?'disabled':''}>▶ Estudar</button>
+      ${ownerMode ? `<button class="btn btn-primary" data-action="new-card">+ Novo card</button>
+      <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
+      <button class="btn btn-ghost" data-action="edit-aula" data-id="${a.id}">Editar aula</button>` : ''}
+      <button class="btn btn-ghost" data-action="export-aula" data-id="${a.id}">⇩ Exportar</button>
+    </div>`;
+
+    if(active.length===0 && archived.length===0){
+      html += `<div class="empty-state">
+        <span class="emoji">🗂️</span>
+        <h3>Nenhum card ainda</h3>
+        <p>${ownerMode ? 'Crie cards manualmente ou importe em massa.' : 'Ainda não há nada para estudar aqui.'}</p>
+        ${ownerMode ? `<div class="toolbar" style="justify-content:center;">
+          <button class="btn btn-primary" data-action="new-card">+ Novo card</button>
+          <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
+        </div>` : ''}
+      </div>`;
+    }else{
+      html += '<div class="card-list">';
+      if(active.length===0){
+        html += `<div class="empty-state" style="padding:24px;"><p>Todos os cards estão arquivados.</p></div>`;
+      }
+      active.forEach(c=>{ html += cardRow(c,false); });
+      html += '</div>';
+
+      if(ownerMode && archived.length>0){
+        const open = !!uiState.openArchives['aula_'+a.id];
+        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="aula_${a.id}"><span class="chev">▶</span> Arquivados (${archived.length})</button>`;
+        if(open){
+          html += '<div class="archive-section">';
+          archived.forEach(c=>{ html += cardRow(c,true); });
+          html += '</div>';
+        }
+      }
+    }
+    appEl.innerHTML = html;
+  }
+
+  function cardRow(c, archived){
+    const metaBits = [];
+    if(c.lastResult==='errou') metaBits.push('<span class="badge badge-wrong">⚠️ Ainda não</span>');
+    else if(c.lastResult==='correto') metaBits.push('<span class="badge badge-correct">✓ Entendi</span>');
+    return `<div class="item-row card-preview-row${archived?' archived-row':''}">
+      <div class="item-main" style="cursor:default;">
+        <div class="item-text">
+          <div class="card-preview-front">${escapeHtml(c.front)}</div>
+          <div class="card-preview-back">${escapeHtml(c.back)}</div>
+          ${metaBits.length?`<div class="item-meta">${metaBits.join(' ')}</div>`:''}
+        </div>
+      </div>
+      ${ownerMode ? `<div class="item-actions">
+        ${archived
+          ? `<button class="btn btn-sm btn-ghost" data-action="restore-card" data-id="${c.id}">Restaurar</button>
+             <button class="btn btn-sm btn-danger" data-action="delete-card" data-id="${c.id}">Excluir</button>`
+          : `<button class="btn-icon" data-action="edit-card" data-id="${c.id}" title="Editar">✏️</button>
+             <button class="btn-icon" data-action="archive-card" data-id="${c.id}" title="Arquivar">🗄️</button>
+             <button class="btn-icon" data-action="delete-card" data-id="${c.id}" title="Excluir permanentemente">🗑️</button>`
+        }
+      </div>` : ''}
+    </div>`;
+  }
+
+  /* ---------------- Study mode ---------------- */
+  function startStudy(aulaId){
+    const found = findAula(aulaId);
+    if(!found) return;
+    const activeCards = found.aula.cards.filter(c=>!c.archived);
+    if(activeCards.length===0) return;
+    session = {
+      aulaId,
+      round: 'main',
+      deck: shuffle(activeCards.map(c=>c.id)),
+      reviewDeck: [],
+      pos: 0,
+      revealed: false,
+      correctCount: 0,
+      wrongCount: 0,
+      hadReview: false,
+      history: []
+    };
+    view = {type:'study', aulaId};
+    render();
+  }
+
+  function currentSessionCard(){
+    if(!session) return null;
+    const id = session.deck[session.pos];
+    if(!id) return null;
+    return findCard(id);
+  }
+
+  function snapshotSession(){
+    return JSON.parse(JSON.stringify({
+      round: session.round, deck: session.deck, reviewDeck: session.reviewDeck,
+      pos: session.pos, revealed: session.revealed,
+      correctCount: session.correctCount, wrongCount: session.wrongCount,
+      hadReview: session.hadReview
+    }));
+  }
+
+  function revealCard(){
+    if(!session || session.round==='done') return;
+    session.revealed = true;
+    render();
+  }
+
+  function answerCard(correct){
+    if(!session || session.round==='done' || !session.revealed) return;
+    const cardId = session.deck[session.pos];
+    const found = findCard(cardId);
+    const snap = snapshotSession();
+    snap.cardId = cardId;
+    snap.prevResult = found ? found.card.lastResult : null;
+    snap.prevStudiedAt = found ? found.card.lastStudiedAt : null;
+    session.history.push(snap);
+
+    if(found){
+      found.card.lastResult = correct ? 'correto' : 'errou';
+      found.card.lastStudiedAt = todayStr();
+      setCardProgress(cardId, found.card.lastResult, found.card.lastStudiedAt);
+    }
+    if(correct){
+      session.correctCount++;
+    }else{
+      session.wrongCount++;
+      if(!session.reviewDeck.includes(cardId)) session.reviewDeck.push(cardId);
+    }
+    session.pos++;
+    session.revealed = false;
+    if(session.pos >= session.deck.length){
+      if(session.round==='main' && session.reviewDeck.length>0){
+        session.round = 'review';
+        session.hadReview = true;
+        session.deck = shuffle(session.reviewDeck);
+        session.reviewDeck = [];
+        session.pos = 0;
+      }else{
+        session.round = 'done';
+        registerStudyCompletion();
+      }
+    }
+    render();
+  }
+
+  function undoAnswer(){
+    if(!session || session.history.length===0) return;
+    const snap = session.history.pop();
+    session.round = snap.round; session.deck = snap.deck; session.reviewDeck = snap.reviewDeck;
+    session.pos = snap.pos; session.revealed = snap.revealed;
+    session.correctCount = snap.correctCount; session.wrongCount = snap.wrongCount;
+    session.hadReview = snap.hadReview;
+    if(snap.cardId){
+      const found = findCard(snap.cardId);
+      if(found){ found.card.lastResult = snap.prevResult; found.card.lastStudiedAt = snap.prevStudiedAt; }
+      setCardProgress(snap.cardId, snap.prevResult, snap.prevStudiedAt);
+    }
+    render();
+  }
+
+  function exitStudy(){
+    session = null;
+    goAula(view.aulaId);
+  }
+
+  function renderStudyView(){
+    const found = findAula(view.aulaId);
+    if(!found || !session){ goLibrary(); return; }
+    const {modulo:m, discipline:d, aula:a} = found;
+
+    let html = renderBreadcrumb([
+      {label:'Biblioteca', action:'go-library'},
+      {label:m.name, action:'open-modulo-'+m.id},
+      {label:d.name, action:'open-discipline-'+d.id},
+      {label:a.name, action:'open-aula-'+a.id},
+      {label:'Estudar'}
+    ]);
+
+    if(session.round==='done'){
+      html += renderCompletionScreen(a);
+      appEl.innerHTML = html;
+      return;
+    }
+
+    const total = session.deck.length;
+    const posDisplay = Math.min(session.pos+1, total);
+    const pct = total? Math.round((session.pos/total)*100) : 0;
+    const roundLabel = session.round==='review' ? 'Rodada de revisão' : 'Estudando';
+
+    const sc = currentSessionCard();
+    const cardData = sc ? sc.card : null;
+
+    html += `<div class="study-topbar">
+      <div class="page-title" style="font-size:19px;">${roundLabel}</div>
+      <div class="study-stats">
+        <span class="stat-correct">✓ ${session.correctCount}</span>
+        <span class="stat-wrong">✕ ${session.wrongCount}</span>
+      </div>
+    </div>`;
+    html += `<div class="progress-label"><span>${posDisplay} / ${total}</span><span>${pct}%</span></div>`;
+    html += `<div class="progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>`;
+
+    if(cardData){
+      if(!session.revealed){
+        html += `<div class="flashcard" data-action="reveal-card">
+          <span class="side-label">Pergunta</span>
+          <div>${escapeHtml(cardData.front)}</div>
+          <span class="tap-hint">Toque para revelar a resposta</span>
+        </div>`;
+      }else{
+        html += `<div class="flashcard revealed">
+          <span class="side-label">Resposta</span>
+          <div class="back-divider"></div>
+          <div>${escapeHtml(cardData.back)}</div>
+        </div>`;
+      }
+    }
+
+    if(session.revealed){
+      html += `<div class="study-actions">
+        <button class="btn btn-danger" data-action="answer-wrong">✕ Ainda não</button>
+        <button class="btn btn-success" data-action="answer-correct">✓ Entendi</button>
+      </div>`;
+    }
+
+    html += `<div class="study-controls">
+      <button class="btn btn-ghost btn-sm" data-action="undo-answer" ${session.history.length===0?'disabled':''}>↩ Desfazer</button>
+      ${cardData && ownerMode?`<button class="btn btn-ghost btn-sm" data-action="edit-study-card" data-id="${cardData.id}">✏️ Editar card</button>`:''}
+      <button class="btn btn-ghost btn-sm" data-action="exit-study">Sair do estudo</button>
+    </div>`;
+
+    appEl.innerHTML = html;
+  }
+
+  function renderCompletionScreen(a){
+    const title = session.hadReview ? 'Revisão concluída!' : 'Deck completo!';
+    const emoji = session.hadReview ? '🎯' : '🎉';
+    return `<div class="completion-box">
+      <div class="completion-emoji">${emoji}</div>
+      <div class="completion-title">${title}</div>
+      <p class="page-sub">Você concluiu o estudo de "${escapeHtml(a.name)}"</p>
+      <div class="completion-stats">
+        <div><div class="completion-stat-num" style="color:var(--success)">${session.correctCount}</div><div class="completion-stat-label">Acertos</div></div>
+        <div><div class="completion-stat-num" style="color:var(--danger)">${session.wrongCount}</div><div class="completion-stat-label">Erros</div></div>
+      </div>
+      <div class="toolbar" style="justify-content:center;">
+        <button class="btn btn-primary" data-action="restart-study" data-id="${a.id}">🔁 Estudar novamente</button>
+        <button class="btn btn-ghost" data-action="exit-study">Voltar à aula</button>
+      </div>
+    </div>`;
+  }
+
+  /* ---------------- Event delegation ---------------- */
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest('[data-action]');
+    if(!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+
+    if(OWNER_ONLY_ACTIONS.has(action) && !ownerMode) return;
+
+    switch(action){
+      case 'go-library': goLibrary(); break;
+      case 'noop': break;
+
+      case 'new-modulo': openModuloModal(null); break;
+      case 'edit-modulo': openModuloModal(getModulo(id)); break;
+      case 'archive-modulo': {
+        const m = getModulo(id); if(m){ m.archived = true; saveContent(); render(); }
+        break;
+      }
+      case 'restore-modulo': {
+        const m = getModulo(id); if(m){ m.archived = false; saveContent(); render(); }
+        break;
+      }
+      case 'delete-modulo': {
+        const m = getModulo(id);
+        if(m) openConfirmModal(`Tem certeza que deseja excluir permanentemente o módulo <b>${escapeHtml(m.name)}</b> e todas as suas disciplinas, aulas e cards? Essa ação não pode ser desfeita.`, ()=>{
+          state.modulos = state.modulos.filter(x=>x.id!==id);
+          saveContent();
+        });
+        break;
+      }
+      case 'open-modulo': goModulo(id); break;
+
+      case 'new-discipline': {
+        const m = getModulo(view.id);
+        if(m) openDisciplinaModal(m, null);
+        break;
+      }
+      case 'edit-discipline': {
+        const found = findDiscipline(id);
+        if(found) openDisciplinaModal(found.modulo, found.discipline);
+        break;
+      }
+      case 'archive-discipline': {
+        const found = findDiscipline(id);
+        if(found){ found.discipline.archived = true; saveContent(); render(); }
+        break;
+      }
+      case 'restore-discipline': {
+        const found = findDiscipline(id);
+        if(found){ found.discipline.archived = false; saveContent(); render(); }
+        break;
+      }
+      case 'delete-discipline': {
+        const found = findDiscipline(id);
+        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente a disciplina <b>${escapeHtml(found.discipline.name)}</b> e todo o seu conteúdo? Essa ação não pode ser desfeita.`, ()=>{
+          found.modulo.disciplinas = found.modulo.disciplinas.filter(x=>x.id!==id);
+          saveContent();
+        });
+        break;
+      }
+      case 'open-discipline': goDiscipline(id); break;
+
+      case 'new-aula': {
+        const found = findDiscipline(view.id);
+        if(found) openAulaModal(found.discipline, null);
+        break;
+      }
+      case 'edit-aula': {
+        const found = findAula(id);
+        if(found) openAulaModal(found.discipline, found.aula);
+        break;
+      }
+      case 'archive-aula': {
+        const found = findAula(id);
+        if(found){ found.aula.archived = true; saveContent(); render(); }
+        break;
+      }
+      case 'restore-aula': {
+        const found = findAula(id);
+        if(found){ found.aula.archived = false; saveContent(); render(); }
+        break;
+      }
+      case 'delete-aula': {
+        const found = findAula(id);
+        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente a aula <b>${escapeHtml(found.aula.name)}</b> e todos os seus cards? Essa ação não pode ser desfeita.`, ()=>{
+          found.discipline.aulas = found.discipline.aulas.filter(x=>x.id!==id);
+          saveContent();
+        });
+        break;
+      }
+      case 'open-aula': goAula(id); break;
+
+      case 'new-card': {
+        const found = findAula(view.id);
+        if(found) openCardModal(found.aula, null);
+        break;
+      }
+      case 'edit-card': {
+        const found = findCard(id);
+        if(found) openCardModal(found.aula, found.card);
+        break;
+      }
+      case 'archive-card': {
+        const found = findCard(id);
+        if(found){ found.card.archived = true; saveContent(); render(); }
+        break;
+      }
+      case 'restore-card': {
+        const found = findCard(id);
+        if(found){ found.card.archived = false; saveContent(); render(); }
+        break;
+      }
+      case 'delete-card': {
+        const found = findCard(id);
+        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente este card? Essa ação não pode ser desfeita.`, ()=>{
+          found.aula.cards = found.aula.cards.filter(x=>x.id!==id);
+          saveContent();
+        });
+        break;
+      }
+
+      case 'open-import': {
+        const found = findAula(view.id);
+        if(found) openImportModal(found.aula);
+        break;
+      }
+
+      case 'export-aula': {
+        const found = findAula(id);
+        if(found) openExportModal(found.aula.cards.filter(c=>!c.archived), found.aula.name);
+        break;
+      }
+      case 'export-discipline': {
+        const found = findDiscipline(id);
+        if(found){
+          const cards = found.discipline.aulas.filter(a=>!a.archived).flatMap(a=>a.cards.filter(c=>!c.archived));
+          openExportModal(cards, found.discipline.name);
+        }
+        break;
+      }
+      case 'export-modulo': {
+        const m = getModulo(id);
+        if(m){
+          const cards = m.disciplinas.filter(d=>!d.archived).flatMap(d=>d.aulas.filter(a=>!a.archived).flatMap(a=>a.cards.filter(c=>!c.archived)));
+          openExportModal(cards, m.name);
+        }
+        break;
+      }
+
+      case 'start-study': startStudy(id); break;
+      case 'restart-study': startStudy(id); break;
+      case 'reveal-card': revealCard(); break;
+      case 'answer-correct': answerCard(true); break;
+      case 'answer-wrong': answerCard(false); break;
+      case 'undo-answer': undoAnswer(); break;
+      case 'exit-study': exitStudy(); break;
+      case 'edit-study-card': {
+        const found = findCard(id);
+        if(found) openCardModal(found.aula, found.card, { onSaved: ()=>render() });
+        break;
+      }
+
+      case 'close-modal': closeModal(); break;
+      case 'modal-overlay-click': break;
+
+      default:
+        if(action.startsWith('open-modulo-')){ goModulo(action.replace('open-modulo-','')); }
+        else if(action.startsWith('open-discipline-')){ goDiscipline(action.replace('open-discipline-','')); }
+        else if(action.startsWith('open-aula-')){ goAula(action.replace('open-aula-','')); }
+        break;
+    }
+  });
+
+  document.addEventListener('click', (e)=>{
+    const toggle = e.target.closest('[data-action="toggle-archive"]');
+    if(!toggle) return;
+    const key = toggle.dataset.key;
+    uiState.openArchives[key] = !uiState.openArchives[key];
+    render();
+  });
+
+  document.getElementById('owner-lock-btn').addEventListener('click', ()=>{
+    if(API_SPACE !== 'public') return;
+    if(ownerMode){
+      ownerMode = false; ownerPin = null; sessionStorage.removeItem('mc_owner_pin');
+      updateOwnerLockBtn(); render();
+    }else{
+      openPinModal();
+    }
+  });
+
+  /* ---------------- Init ---------------- */
+  updateOwnerLockBtn();
+  initApp();
+})();
+</script>
+</body>
+</html>
