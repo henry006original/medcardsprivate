@@ -1325,7 +1325,7 @@
     }
     html += `<div class="toolbar">
       <button class="btn btn-success" data-action="start-study" data-id="${a.id}" ${!hasDueNow?'disabled':''}>▶ Estudar</button>
-      ${active.length>0 && !hasDueNow ? `<button class="btn btn-ghost" data-action="study-all" data-id="${a.id}">📚 Estudar tudo mesmo assim</button>` : ''}
+      ${active.length>0 && !hasDueNow ? `<button class="btn btn-ghost" data-action="study-all" data-id="${a.id}">📚 Estudar tudo mesmo assim (rápido)</button>` : ''}
       ${ownerMode ? `<button class="btn btn-primary" data-action="new-card">+ Novo card</button>
       <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
       <button class="btn btn-ghost" data-action="edit-aula" data-id="${a.id}">Editar aula</button>` : ''}
@@ -1541,18 +1541,21 @@
     };
   }
 
-  function startStudy(aulaId, forceAll){
+  // quickMode=true -> "Estudar tudo mesmo assim": binary Entendi/Ainda não,
+  // never touches srs at all, so it never disturbs the spaced schedule.
+  // quickMode falsy -> normal spaced-repetition study, due-filtered, SM-2 ratings.
+  function startStudy(aulaId, quickMode){
     const found = findAula(aulaId);
     if(!found) return;
     const activeCards = found.aula.cards.filter(c=>!c.archived);
     if(activeCards.length===0) return;
     activeCards.forEach(c=>ensureCardSrs(c));
 
-    const now = Date.now();
     let deck;
-    if(forceAll){
+    if(quickMode){
       deck = shuffle(activeCards.map(c=>c.id));
     }else{
+      const now = Date.now();
       const due = activeCards.filter(c=>c.srs.state!=='new' && c.srs.due<=now).sort((a,b)=>a.srs.due-b.srs.due);
       const allowance = Math.max(0, NEW_CARDS_PER_DAY - loadDailyNewCount(aulaId));
       const fresh = activeCards.filter(c=>c.srs.state==='new').slice(0, allowance);
@@ -1563,7 +1566,11 @@
 
     session = {
       aulaId,
+      mode: quickMode ? 'quick' : 'spaced',
+      round: 'main',
       deck,
+      reviewDeck: [],
+      hadReview: false,
       initialLength: deck.length,
       pos: 0,
       revealed: false,
@@ -1589,58 +1596,75 @@
     render();
   }
 
-  function answerCard(rating){
+  // input: rating string ('again'|'hard'|'good'|'easy') in spaced mode, or
+  // boolean (true=Entendi, false=Ainda não) in quick mode.
+  function answerCard(input){
     if(!session || session.done || !session.revealed) return;
     const cardId = session.deck[session.pos];
     const found = findCard(cardId);
     if(!found) return;
+    const isQuick = session.mode === 'quick';
+    const correct = isQuick ? input === true : input !== 'again';
 
     session.history.push({
-      pos: session.pos, revealed: session.revealed,
+      pos: session.pos,
       correctCount: session.correctCount, wrongCount: session.wrongCount,
-      deckLenBefore: session.deck.length, cardId,
-      prevSrs: JSON.parse(JSON.stringify(found.card.srs)),
+      deck: session.deck.slice(), round: session.round, reviewDeck: session.reviewDeck.slice(),
+      cardId,
+      prevSrs: isQuick ? null : JSON.parse(JSON.stringify(found.card.srs)),
       prevResult: found.card.lastResult, prevStudiedAt: found.card.lastStudiedAt
     });
 
-    const nextSrs = computeNextSrs(ensureCardSrs(found.card), rating);
-    found.card.srs = nextSrs;
-    const correct = rating !== 'again';
+    if(!isQuick){
+      const nextSrs = computeNextSrs(ensureCardSrs(found.card), input);
+      found.card.srs = nextSrs;
+      // Cards still mid learning/relearning reappear later in this same session.
+      if(nextSrs.state === 'learning' || nextSrs.state === 'relearning') session.deck.push(cardId);
+    }
+
     found.card.lastResult = correct ? 'correto' : 'errou';
     found.card.lastStudiedAt = todayStr();
     setCardProgress(cardId, found.card.lastResult, found.card.lastStudiedAt);
     if(correct) session.correctCount++; else session.wrongCount++;
 
-    // Cards still mid learning/relearning reappear later in this same session.
-    if(nextSrs.state === 'learning' || nextSrs.state === 'relearning'){
-      session.deck.push(cardId);
-    }
+    if(isQuick && !correct && !session.reviewDeck.includes(cardId)) session.reviewDeck.push(cardId);
 
     session.pos++;
     session.revealed = false;
     if(session.pos >= session.deck.length){
-      session.done = true;
-      registerStudyCompletion();
+      if(isQuick && session.round==='main' && session.reviewDeck.length>0){
+        session.round = 'review';
+        session.hadReview = true;
+        session.deck = shuffle(session.reviewDeck);
+        session.reviewDeck = [];
+        session.pos = 0;
+      }else{
+        session.done = true;
+        registerStudyCompletion();
+      }
     }
-    saveContent();
+    if(!isQuick) saveContent();
     render();
   }
 
   function undoAnswer(){
     if(!session || session.history.length===0) return;
     const snap = session.history.pop();
-    session.pos = snap.pos; session.revealed = snap.revealed;
+    session.pos = snap.pos;
+    session.revealed = false; // always show the front again, never jump back to the revealed back
     session.correctCount = snap.correctCount; session.wrongCount = snap.wrongCount;
     session.done = false;
-    if(session.deck.length > snap.deckLenBefore) session.deck.length = snap.deckLenBefore;
+    session.deck = snap.deck;
+    session.round = snap.round;
+    session.reviewDeck = snap.reviewDeck;
     const found = findCard(snap.cardId);
     if(found){
-      found.card.srs = snap.prevSrs;
+      if(snap.prevSrs) found.card.srs = snap.prevSrs;
       found.card.lastResult = snap.prevResult;
       found.card.lastStudiedAt = snap.prevStudiedAt;
     }
     setCardProgress(snap.cardId, snap.prevResult, snap.prevStudiedAt);
-    saveContent();
+    if(session.mode==='spaced') saveContent();
     render();
   }
 
@@ -1675,8 +1699,12 @@
     const sc = currentSessionCard();
     const cardData = sc ? sc.card : null;
 
+    const isQuick = session.mode === 'quick';
+    const topLabel = isQuick
+      ? (session.round==='review' ? 'Rodada de revisão (rápido)' : 'Estudando (rápido)')
+      : 'Estudando (espaçado)';
     html += `<div class="study-topbar">
-      <div class="page-title" style="font-size:19px;">Estudando</div>
+      <div class="page-title" style="font-size:19px;">${topLabel}</div>
       <div class="study-stats">
         <span class="stat-correct">✓ ${session.correctCount}</span>
         <span class="stat-wrong">✕ ${session.wrongCount}</span>
@@ -1702,13 +1730,20 @@
     }
 
     if(session.revealed && cardData){
-      const preview = previewIntervals(ensureCardSrs(cardData));
-      html += `<div class="study-actions srs-actions">
-        <button class="btn srs-btn srs-again" data-action="srs-again">De novo<span class="srs-preview">${preview.again}</span></button>
-        <button class="btn srs-btn srs-hard" data-action="srs-hard">Difícil<span class="srs-preview">${preview.hard}</span></button>
-        <button class="btn srs-btn srs-good" data-action="srs-good">Bom<span class="srs-preview">${preview.good}</span></button>
-        <button class="btn srs-btn srs-easy" data-action="srs-easy">Fácil<span class="srs-preview">${preview.easy}</span></button>
-      </div>`;
+      if(isQuick){
+        html += `<div class="study-actions">
+          <button class="btn btn-danger" data-action="answer-wrong">✕ Ainda não</button>
+          <button class="btn btn-success" data-action="answer-correct">✓ Entendi</button>
+        </div>`;
+      }else{
+        const preview = previewIntervals(ensureCardSrs(cardData));
+        html += `<div class="study-actions srs-actions">
+          <button class="btn srs-btn srs-again" data-action="srs-again">De novo<span class="srs-preview">${preview.again}</span></button>
+          <button class="btn srs-btn srs-hard" data-action="srs-hard">Difícil<span class="srs-preview">${preview.hard}</span></button>
+          <button class="btn srs-btn srs-good" data-action="srs-good">Bom<span class="srs-preview">${preview.good}</span></button>
+          <button class="btn srs-btn srs-easy" data-action="srs-easy">Fácil<span class="srs-preview">${preview.easy}</span></button>
+        </div>`;
+      }
     }
 
     html += `<div class="study-controls">
@@ -1721,7 +1756,7 @@
   }
 
   function renderCompletionScreen(a){
-    const hadRequeue = session.deck.length > session.initialLength;
+    const hadRequeue = session.mode==='quick' ? session.hadReview : (session.deck.length > session.initialLength);
     const title = hadRequeue ? 'Revisão concluída!' : 'Deck completo!';
     const emoji = hadRequeue ? '🎯' : '🎉';
     return `<div class="completion-box">
@@ -1897,6 +1932,8 @@
       case 'srs-hard': answerCard('hard'); break;
       case 'srs-good': answerCard('good'); break;
       case 'srs-easy': answerCard('easy'); break;
+      case 'answer-correct': answerCard(true); break;
+      case 'answer-wrong': answerCard(false); break;
       case 'undo-answer': undoAnswer(); break;
       case 'exit-study': exitStudy(); break;
       case 'edit-study-card': {
