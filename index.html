@@ -10,8 +10,8 @@
 <style>
   :root{
     --bg:#0a120f;
-    --surface:#141f1a;
-    --surface2:#192b24;
+    --surface:#111f1a;
+    --surface2:#16281f;
     --text:#f0f0f6;
     --text-secondary:#66667a;
     --accent:#6366f1;
@@ -277,7 +277,9 @@
     position:absolute;bottom:14px;left:0;right:0;
     font-size:12px;color:var(--text-secondary);font-weight:400;
   }
-  .flashcard .back-divider{width:40px;height:2px;background:var(--accent);margin:0 auto 14px;border-radius:2px;}
+  .flashcard .back-divider{width:40px;height:2px;background:var(--accent);margin:14px auto;border-radius:2px;}
+  .flashcard .front-recap{color:var(--text-secondary);font-size:15px;font-weight:500;}
+  .flashcard .side-label-inline{position:static;display:block;margin-bottom:10px;}
 
   .study-actions{display:flex;gap:12px;margin-top:20px;}
   .study-actions .btn{flex:1;justify-content:center;padding:14px;font-size:15px;}
@@ -1371,7 +1373,7 @@
       {label:a.name}
     ]);
     const stats = active.length>0 ? aulaSrsStats(a) : {paraRevisar:0,novos:0,aprendendo:0,noPrazo:0};
-    const dailyAllowance = Math.max(0, NEW_CARDS_PER_DAY - loadDailyNewCount(a.id));
+    const dailyAllowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(a.id));
     const hasDueNow = stats.paraRevisar>0 || (stats.novos>0 && dailyAllowance>0);
     html += `<h1 class="page-title">${escapeHtml(a.name)}</h1><p class="page-sub">${active.length} card${active.length===1?'':'s'} ativo${active.length===1?'':'s'}</p>`;
     if(active.length>0){
@@ -1383,8 +1385,9 @@
       </div>`;
     }
     html += `<div class="toolbar">
-      <button class="btn btn-success" data-action="start-study" data-id="${a.id}" ${!hasDueNow?'disabled':''}>▶ Estudar</button>
-      ${active.length>0 && !hasDueNow ? `<button class="btn btn-ghost" data-action="study-all" data-id="${a.id}">📚 Estudar tudo mesmo assim (rápido)</button>` : ''}
+      ${active.length>0 ? `<button class="btn btn-success" data-action="start-study" data-id="${a.id}" ${!hasDueNow?'disabled':''} title="${hasDueNow?'':'Nada vencido agora — use Revisão Rápida pra estudar tudo mesmo assim'}">🧠 Estudar (Espaçada)</button>
+      <button class="btn btn-ghost" data-action="study-all" data-id="${a.id}">⚡ Estudar (Rápida)</button>
+      <button class="btn-icon" data-action="open-study-settings" title="Configurações de estudo">⚙️</button>` : ''}
       ${ownerMode ? `<button class="btn btn-primary" data-action="new-card">+ Novo card</button>
       <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
       <button class="btn btn-ghost" data-action="edit-aula" data-id="${a.id}">Editar aula</button>` : ''}
@@ -1451,9 +1454,21 @@
   const RELEARNING_STEPS = [10/1440];       // 10min
   const GRADUATING_INTERVAL_GOOD = 1;       // day
   const GRADUATING_INTERVAL_EASY = 4;       // days
-  const NEW_CARDS_PER_DAY = 20;
+  const DEFAULT_NEW_CARDS_PER_DAY = 9999;   // effectively unlimited unless the user sets a lower cap
   const MIN_EASE = 1.3;
   const DAY_MS = 86400000;
+
+  // User-adjustable "new cards per day" cap (global, not per-aula). Unlimited by default —
+  // this only exists so the user can throttle themselves later if they want to, not to
+  // silently hide cards they haven't studied yet.
+  function loadNewCardsPerDaySetting(){
+    const raw = localStorage.getItem('mc_new_per_day');
+    const n = raw!==null ? parseInt(raw,10) : NaN;
+    return (isNaN(n) || n<0) ? DEFAULT_NEW_CARDS_PER_DAY : n;
+  }
+  function saveNewCardsPerDaySetting(n){
+    localStorage.setItem('mc_new_per_day', String(n));
+  }
 
   function createSrs(){
     return { state:'new', ease:2.5, interval:0, reps:0, lapses:0, step:0, due: Date.now() };
@@ -1600,6 +1615,30 @@
     };
   }
 
+  function openStudySettingsModal(){
+    const current = loadNewCardsPerDaySetting();
+    const isUnlimited = current >= DEFAULT_NEW_CARDS_PER_DAY;
+    openModal(`
+      <div class="modal-title">⚙️ Configurações de estudo</div>
+      <div class="form-group">
+        <label class="form-label">Cards novos por dia (revisão espaçada)</label>
+        <input type="number" id="f-new-per-day" min="0" placeholder="Sem limite" value="${isUnlimited?'':current}">
+        <p style="font-size:12px;color:var(--text-secondary);margin-top:6px;">Deixe em branco pra não ter limite (todos os cards novos entram na fila de uma vez). Coloque um número se quiser se auto-limitar, tipo Anki.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="save-study-settings-btn">Salvar</button>
+      </div>
+    `);
+    document.getElementById('save-study-settings-btn').addEventListener('click', ()=>{
+      const raw = document.getElementById('f-new-per-day').value.trim();
+      const n = raw==='' ? DEFAULT_NEW_CARDS_PER_DAY : Math.max(0, parseInt(raw,10)||0);
+      saveNewCardsPerDaySetting(n);
+      closeModal();
+      render();
+    });
+  }
+
   // quickMode=true -> "Estudar tudo mesmo assim": binary Entendi/Ainda não,
   // never touches srs at all, so it never disturbs the spaced schedule.
   // quickMode falsy -> normal spaced-repetition study, due-filtered, SM-2 ratings.
@@ -1616,7 +1655,7 @@
     }else{
       const now = Date.now();
       const due = activeCards.filter(c=>c.srs.state!=='new' && c.srs.due<=now).sort((a,b)=>a.srs.due-b.srs.due);
-      const allowance = Math.max(0, NEW_CARDS_PER_DAY - loadDailyNewCount(aulaId));
+      const allowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(aulaId));
       const fresh = activeCards.filter(c=>c.srs.state==='new').slice(0, allowance);
       if(fresh.length>0) addDailyNewCount(aulaId, fresh.length);
       deck = due.concat(fresh).map(c=>c.id);
@@ -1781,8 +1820,10 @@
         </div>`;
       }else{
         html += `<div class="flashcard revealed">
-          <span class="side-label">Resposta</span>
+          <span class="side-label">Pergunta</span>
+          <div class="front-recap">${escapeHtml(cardData.front)}</div>
           <div class="back-divider"></div>
+          <span class="side-label side-label-inline">Resposta</span>
           <div>${escapeHtml(cardData.back)}</div>
         </div>`;
       }
@@ -1957,6 +1998,8 @@
         break;
       }
 
+      case 'open-study-settings': openStudySettingsModal(); break;
+
       case 'export-aula': {
         const found = findAula(id);
         if(found) openExportModal(found.aula.cards.filter(c=>!c.archived), found.aula.name);
@@ -2012,6 +2055,25 @@
     const key = toggle.dataset.key;
     uiState.openArchives[key] = !uiState.openArchives[key];
     render();
+  });
+
+  // Keyboard shortcuts during study: Space = reveal (same as tapping the card),
+  // 1/2/3/4 = De novo/Difícil/Bom/Fácil once revealed.
+  document.addEventListener('keydown', (e)=>{
+    if(view.type !== 'study' || !session) return;
+    if(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if(modalRoot.children.length>0) return;
+    if(e.key===' '){
+      e.preventDefault();
+      if(!session.revealed) revealCard();
+      return;
+    }
+    if(session.revealed){
+      if(e.key==='1') answerCard('again');
+      else if(e.key==='2') answerCard('hard');
+      else if(e.key==='3') answerCard('good');
+      else if(e.key==='4') answerCard('easy');
+    }
   });
 
   document.getElementById('owner-lock-btn').addEventListener('click', ()=>{
