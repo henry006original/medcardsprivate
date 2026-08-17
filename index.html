@@ -1894,15 +1894,22 @@
     }
 
     if(session.revealed && cardData){
-      // Same 4-way rating buttons in both modes; in quick mode they never touch
-      // the card's srs (no preview shown, since nothing will actually change).
-      const preview = isQuick ? null : previewIntervals(ensureCardSrs(cardData));
-      html += `<div class="study-actions srs-actions">
-        <button class="btn srs-btn srs-again" data-action="srs-again">De novo${preview?`<span class="srs-preview">${preview.again}</span>`:''}</button>
-        <button class="btn srs-btn srs-hard" data-action="srs-hard">Difícil${preview?`<span class="srs-preview">${preview.hard}</span>`:''}</button>
-        <button class="btn srs-btn srs-good" data-action="srs-good">Bom${preview?`<span class="srs-preview">${preview.good}</span>`:''}</button>
-        <button class="btn srs-btn srs-easy" data-action="srs-easy">Fácil${preview?`<span class="srs-preview">${preview.easy}</span>`:''}</button>
-      </div>`;
+      if(isQuick){
+        // Quick mode is binary: Não entendi requeues the card into this
+        // session's review round and never touches srs.
+        html += `<div class="study-actions srs-actions quick-actions">
+          <button class="btn srs-btn srs-again" data-action="srs-again">Não entendi</button>
+          <button class="btn srs-btn srs-easy" data-action="srs-easy">Entendi</button>
+        </div>`;
+      }else{
+        const preview = previewIntervals(ensureCardSrs(cardData));
+        html += `<div class="study-actions srs-actions">
+          <button class="btn srs-btn srs-again" data-action="srs-again">De novo${preview?`<span class="srs-preview">${preview.again}</span>`:''}</button>
+          <button class="btn srs-btn srs-hard" data-action="srs-hard">Difícil${preview?`<span class="srs-preview">${preview.hard}</span>`:''}</button>
+          <button class="btn srs-btn srs-good" data-action="srs-good">Bom${preview?`<span class="srs-preview">${preview.good}</span>`:''}</button>
+          <button class="btn srs-btn srs-easy" data-action="srs-easy">Fácil${preview?`<span class="srs-preview">${preview.easy}</span>`:''}</button>
+        </div>`;
+      }
     }
 
     html += `<div class="study-controls">
@@ -2123,7 +2130,8 @@
   });
 
   // Keyboard shortcuts during study: Space = reveal (same as tapping the card),
-  // 1/2/3/4 = De novo/Difícil/Bom/Fácil once revealed.
+  // 1/2/3/4 = De novo/Difícil/Bom/Fácil once revealed (spaced mode), or
+  // 1/2 = Não entendi/Entendi once revealed (quick mode).
   document.addEventListener('keydown', (e)=>{
     if(view.type !== 'study' || !session) return;
     if(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
@@ -2134,10 +2142,15 @@
       return;
     }
     if(session.revealed){
-      if(e.key==='1') answerCard('again');
-      else if(e.key==='2') answerCard('hard');
-      else if(e.key==='3') answerCard('good');
-      else if(e.key==='4') answerCard('easy');
+      if(session.mode==='quick'){
+        if(e.key==='1') answerCard('again');
+        else if(e.key==='2') answerCard('easy');
+      }else{
+        if(e.key==='1') answerCard('again');
+        else if(e.key==='2') answerCard('hard');
+        else if(e.key==='3') answerCard('good');
+        else if(e.key==='4') answerCard('easy');
+      }
     }
   });
 
