@@ -182,6 +182,7 @@
   .card-preview-row .item-title{white-space:normal;}
   .card-preview-front{font-weight:600;font-size:15px;}
   .card-preview-back{font-size:13px;color:var(--text-secondary);margin-top:3px;}
+  .card-thumb{width:42px;height:42px;border-radius:10px;object-fit:cover;flex-shrink:0;}
 
   /* Badges */
   .badge{
@@ -226,6 +227,8 @@
   .form-group{margin-bottom:14px;}
   .form-label{display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px;font-weight:500;}
   .form-group input,.form-group textarea,.form-group select{width:100%;}
+  .card-image-field{margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .card-image-preview{max-width:160px;max-height:120px;border-radius:10px;display:block;margin-top:8px;object-fit:cover;}
   .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
   .emoji-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
   .emoji-choice{
@@ -278,6 +281,7 @@
     font-size:12px;color:var(--text-secondary);font-weight:400;
   }
   .flashcard .back-divider{width:40px;height:2px;background:var(--accent);margin:14px auto;border-radius:2px;}
+  .flashcard-image{max-width:100%;max-height:220px;border-radius:12px;margin:10px 0;object-fit:contain;}
   .flashcard .front-recap{color:var(--text-secondary);font-size:15px;font-weight:500;}
   .flashcard .side-label-inline{position:static;display:block;margin-bottom:10px;}
 
@@ -692,6 +696,20 @@
     return null;
   }
 
+  function cardsOfModulo(m){ return m.disciplinas.flatMap(d=>d.aulas.flatMap(a=>a.cards)); }
+  function cardsOfDiscipline(d){ return d.aulas.flatMap(a=>a.cards); }
+
+  // Resets study history for a set of cards: last answer (per-device, mc_progress)
+  // and spaced-repetition schedule back to "new". Here srs lives in the synced
+  // content itself, so the reset has to be pushed back to the server.
+  function resetCardsProgress(cards){
+    cards.forEach(c=>{
+      setCardProgress(c.id, null);
+      c.lastResult = null; c.lastStudiedAt = null; c.srs = createSrs();
+    });
+    if(cards.length) saveContent();
+  }
+
   /* ---------------- View / navigation state ---------------- */
   // {type:'library'} | {type:'modulo',id} | {type:'discipline',id} | {type:'aula',id} | {type:'study',aulaId}
   let view = { type:'library' };
@@ -907,19 +925,88 @@
     });
   }
 
+  /* ---------- Card image upload: downscaled + re-encoded client-side before it
+     ever becomes a data URI, since the raw photo from a phone camera would bloat
+     the synced JSON document by megabytes for what's shown at a few hundred px. ---------- */
+  function compressImageFile(file, maxDim, quality){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        const img = new Image();
+        img.onload = ()=>{
+          let { width, height } = img;
+          if(width > maxDim || height > maxDim){
+            if(width > height){ height = Math.round(height * maxDim / width); width = maxDim; }
+            else { width = Math.round(width * maxDim / height); height = maxDim; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = ()=>reject(new Error('invalid image'));
+        img.src = e.target.result;
+      };
+      reader.onerror = ()=>reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function imageFieldInnerHtml(dataUrl){
+    return `<input type="file" accept="image/*" style="display:none;">
+      <button type="button" class="btn btn-sm btn-ghost" data-role="pick">${dataUrl?'🖼️ Trocar imagem':'🖼️ Adicionar imagem'}</button>
+      ${dataUrl?`<button type="button" class="btn btn-sm btn-ghost" data-role="remove">✕ Remover imagem</button>`:''}
+      ${dataUrl?`<img class="card-image-preview" src="${dataUrl}">`:''}`;
+  }
+  function imageFieldHtml(containerId, dataUrl){
+    return `<div class="card-image-field" id="${containerId}">${imageFieldInnerHtml(dataUrl)}</div>`;
+  }
+  // onChange(dataUrl|null) fires whenever the user picks or removes an image;
+  // the container re-renders itself so pick/remove keep working after a change.
+  function wireImageField(containerId, initialUrl, onChange){
+    const root = document.getElementById(containerId);
+    let busy = false;
+    function bind(){
+      root.querySelector('[data-role="pick"]').addEventListener('click', ()=>{
+        if(!busy) root.querySelector('input[type=file]').click();
+      });
+      const removeBtn = root.querySelector('[data-role="remove"]');
+      if(removeBtn) removeBtn.addEventListener('click', ()=>{ onChange(null); root.innerHTML = imageFieldInnerHtml(null); bind(); });
+      root.querySelector('input[type=file]').addEventListener('change', async (e)=>{
+        const file = e.target.files[0];
+        if(!file) return;
+        busy = true;
+        try{
+          const dataUrl = await compressImageFile(file, 1000, 0.75);
+          onChange(dataUrl);
+          root.innerHTML = imageFieldInnerHtml(dataUrl);
+        }catch(err){
+          alert('Não foi possível carregar essa imagem.');
+        }
+        busy = false;
+        bind();
+      });
+    }
+    bind();
+  }
+
   /* ---------- Card modal ---------- */
   function openCardModal(aula, existing, opts){
     opts = opts || {};
     const isEdit = !!existing;
+    let frontImage = isEdit ? (existing.frontImage || null) : null;
+    let backImage = isEdit ? (existing.backImage || null) : null;
     openModal(`
       <div class="modal-title">${isEdit?'Editar card':'Novo card'}</div>
       <div class="form-group">
         <label class="form-label">Frente (pergunta)</label>
         <textarea id="f-card-front" rows="3" placeholder="Ex: Qual a tríade de Virchow?">${escapeHtml(existing?existing.front:'')}</textarea>
+        ${imageFieldHtml('front-image-field', frontImage)}
       </div>
       <div class="form-group">
         <label class="form-label">Verso (resposta)</label>
         <textarea id="f-card-back" rows="4" placeholder="Ex: Estase venosa, lesão endotelial e hipercoagulabilidade">${escapeHtml(existing?existing.back:'')}</textarea>
+        ${imageFieldHtml('back-image-field', backImage)}
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
@@ -927,35 +1014,43 @@
       </div>
     `);
     document.getElementById('f-card-front').focus();
+    wireImageField('front-image-field', frontImage, (url)=>{ frontImage = url; });
+    wireImageField('back-image-field', backImage, (url)=>{ backImage = url; });
     document.getElementById('save-card-btn').addEventListener('click', ()=>{
       const front = document.getElementById('f-card-front').value.trim();
       const back = document.getElementById('f-card-back').value.trim();
       if(!front || !back) return;
       if(isEdit){
         existing.front = front; existing.back = back;
+        existing.frontImage = frontImage; existing.backImage = backImage;
       }else{
-        aula.cards.push({ id: uid(), front, back, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
+        aula.cards.push({ id: uid(), front, back, frontImage, backImage, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
       }
       saveContent(); closeModal();
       if(opts.onSaved) opts.onSaved(); else render();
     });
   }
 
-  /* ---------- Confirm delete modal ---------- */
-  function openConfirmModal(message, onConfirm){
+  /* ---------- Confirm modal (delete or reset — opts lets reset reuse this with different wording) ---------- */
+  function openConfirmModal(message, onConfirm, opts){
+    opts = opts || {};
     pendingConfirmAction = onConfirm;
     openModal(`
-      <div class="modal-title">Excluir permanentemente?</div>
+      <div class="modal-title">${opts.title || 'Excluir permanentemente?'}</div>
       <p class="modal-danger-text">${message}</p>
       <div class="modal-footer">
         <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-        <button class="btn btn-danger" id="confirm-delete-btn">Excluir</button>
+        <button class="btn ${opts.btnClass || 'btn-danger'}" id="confirm-delete-btn">${opts.btnLabel || 'Excluir'}</button>
       </div>
     `);
     document.getElementById('confirm-delete-btn').addEventListener('click', ()=>{
       if(pendingConfirmAction) pendingConfirmAction();
       closeModal(); render();
     });
+  }
+
+  function openResetConfirmModal(message, onConfirm){
+    openConfirmModal(message, onConfirm, { title:'🔄 Resetar progresso?', btnClass:'btn-warning', btnLabel:'Resetar' });
   }
 
   /* ---------- Import modal ---------- */
@@ -1062,7 +1157,7 @@
     confirmBtn.addEventListener('click', ()=>{
       if(currentValid.length===0) return;
       currentValid.forEach(c=>{
-        aula.cards.push({ id: uid(), front:c.front, back:c.back, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
+        aula.cards.push({ id: uid(), front:c.front, back:c.back, frontImage:null, backImage:null, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
       });
       saveContent(); closeModal();
       if(opts.onImported) opts.onImported(); else render();
@@ -1226,15 +1321,17 @@
           <div class="item-meta">${discCount} disciplina${discCount===1?'':'s'}</div>
         </div>
       </div>
-      ${ownerMode ? `<div class="item-actions">
-        ${archived
-          ? `<button class="btn btn-sm btn-ghost" data-action="restore-modulo" data-id="${m.id}">Restaurar</button>
-             <button class="btn btn-sm btn-danger" data-action="delete-modulo" data-id="${m.id}">Excluir</button>`
-          : `<button class="btn-icon" data-action="edit-modulo" data-id="${m.id}" title="Editar">✏️</button>
-             <button class="btn-icon" data-action="archive-modulo" data-id="${m.id}" title="Arquivar">🗄️</button>
-             <button class="btn-icon" data-action="delete-modulo" data-id="${m.id}" title="Excluir permanentemente">🗑️</button>`
-        }
-      </div>` : ''}
+      <div class="item-actions">
+        ${!archived ? `<button class="btn-icon" data-action="reset-modulo" data-id="${m.id}" title="Resetar progresso">🔄</button>` : ''}
+        ${ownerMode
+          ? (archived
+            ? `<button class="btn btn-sm btn-ghost" data-action="restore-modulo" data-id="${m.id}">Restaurar</button>
+               <button class="btn btn-sm btn-danger" data-action="delete-modulo" data-id="${m.id}">Excluir</button>`
+            : `<button class="btn-icon" data-action="edit-modulo" data-id="${m.id}" title="Editar">✏️</button>
+               <button class="btn-icon" data-action="archive-modulo" data-id="${m.id}" title="Arquivar">🗄️</button>
+               <button class="btn-icon" data-action="delete-modulo" data-id="${m.id}" title="Excluir permanentemente">🗑️</button>`
+          ) : ''}
+      </div>
     </div>`;
   }
 
@@ -1255,6 +1352,7 @@
       <button class="btn btn-ghost" data-action="quick-import" data-level="modulo" data-id="${m.id}">⇪ Importar</button>
       <button class="btn btn-ghost" data-action="edit-modulo" data-id="${m.id}">Editar módulo</button>` : ''}
       <button class="btn btn-ghost" data-action="export-modulo" data-id="${m.id}">⇩ Exportar tudo</button>
+      <button class="btn btn-ghost" data-action="reset-modulo" data-id="${m.id}">🔄 Resetar progresso</button>
     </div>`;
 
     if(active.length===0 && archived.length===0){
@@ -1296,15 +1394,17 @@
           <div class="item-meta">${aulaCount} aula${aulaCount===1?'':'s'}</div>
         </div>
       </div>
-      ${ownerMode ? `<div class="item-actions">
-        ${archived
-          ? `<button class="btn btn-sm btn-ghost" data-action="restore-discipline" data-id="${d.id}">Restaurar</button>
-             <button class="btn btn-sm btn-danger" data-action="delete-discipline" data-id="${d.id}">Excluir</button>`
-          : `<button class="btn-icon" data-action="edit-discipline" data-id="${d.id}" title="Editar">✏️</button>
-             <button class="btn-icon" data-action="archive-discipline" data-id="${d.id}" title="Arquivar">🗄️</button>
-             <button class="btn-icon" data-action="delete-discipline" data-id="${d.id}" title="Excluir permanentemente">🗑️</button>`
-        }
-      </div>` : ''}
+      <div class="item-actions">
+        ${!archived ? `<button class="btn-icon" data-action="reset-discipline" data-id="${d.id}" title="Resetar progresso">🔄</button>` : ''}
+        ${ownerMode
+          ? (archived
+            ? `<button class="btn btn-sm btn-ghost" data-action="restore-discipline" data-id="${d.id}">Restaurar</button>
+               <button class="btn btn-sm btn-danger" data-action="delete-discipline" data-id="${d.id}">Excluir</button>`
+            : `<button class="btn-icon" data-action="edit-discipline" data-id="${d.id}" title="Editar">✏️</button>
+               <button class="btn-icon" data-action="archive-discipline" data-id="${d.id}" title="Arquivar">🗄️</button>
+               <button class="btn-icon" data-action="delete-discipline" data-id="${d.id}" title="Excluir permanentemente">🗑️</button>`
+          ) : ''}
+      </div>
     </div>`;
   }
 
@@ -1327,6 +1427,7 @@
       <button class="btn btn-ghost" data-action="quick-import" data-level="discipline" data-id="${d.id}">⇪ Importar</button>
       <button class="btn btn-ghost" data-action="edit-discipline" data-id="${d.id}">Editar disciplina</button>` : ''}
       <button class="btn btn-ghost" data-action="export-discipline" data-id="${d.id}">⇩ Exportar tudo</button>
+      <button class="btn btn-ghost" data-action="reset-discipline" data-id="${d.id}">🔄 Resetar progresso</button>
     </div>`;
 
     if(active.length===0 && archived.length===0){
@@ -1367,15 +1468,17 @@
           <div class="item-meta">${cardCount} card${cardCount===1?'':'s'}</div>
         </div>
       </div>
-      ${ownerMode ? `<div class="item-actions">
-        ${archived
-          ? `<button class="btn btn-sm btn-ghost" data-action="restore-aula" data-id="${a.id}">Restaurar</button>
-             <button class="btn btn-sm btn-danger" data-action="delete-aula" data-id="${a.id}">Excluir</button>`
-          : `<button class="btn-icon" data-action="edit-aula" data-id="${a.id}" title="Editar">✏️</button>
-             <button class="btn-icon" data-action="archive-aula" data-id="${a.id}" title="Arquivar">🗄️</button>
-             <button class="btn-icon" data-action="delete-aula" data-id="${a.id}" title="Excluir permanentemente">🗑️</button>`
-        }
-      </div>` : ''}
+      <div class="item-actions">
+        ${!archived ? `<button class="btn-icon" data-action="reset-aula" data-id="${a.id}" title="Resetar progresso">🔄</button>` : ''}
+        ${ownerMode
+          ? (archived
+            ? `<button class="btn btn-sm btn-ghost" data-action="restore-aula" data-id="${a.id}">Restaurar</button>
+               <button class="btn btn-sm btn-danger" data-action="delete-aula" data-id="${a.id}">Excluir</button>`
+            : `<button class="btn-icon" data-action="edit-aula" data-id="${a.id}" title="Editar">✏️</button>
+               <button class="btn-icon" data-action="archive-aula" data-id="${a.id}" title="Arquivar">🗄️</button>
+               <button class="btn-icon" data-action="delete-aula" data-id="${a.id}" title="Excluir permanentemente">🗑️</button>`
+          ) : ''}
+      </div>
     </div>`;
   }
 
@@ -1412,6 +1515,7 @@
       <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
       <button class="btn btn-ghost" data-action="edit-aula" data-id="${a.id}">Editar aula</button>` : ''}
       <button class="btn btn-ghost" data-action="export-aula" data-id="${a.id}">⇩ Exportar</button>
+      <button class="btn btn-ghost" data-action="reset-aula" data-id="${a.id}">🔄 Resetar progresso</button>
     </div>`;
 
     if(active.length===0 && archived.length===0){
@@ -1449,23 +1553,28 @@
     const metaBits = [];
     if(c.lastResult==='errou') metaBits.push('<span class="badge badge-wrong">⚠️ Ainda não</span>');
     else if(c.lastResult==='correto') metaBits.push('<span class="badge badge-correct">✓ Entendi</span>');
+    if(c.frontImage || c.backImage) metaBits.push('<span class="badge" style="background:#6366f122;color:#a5b4fc;">🖼️ Imagem</span>');
+    const thumb = c.frontImage || c.backImage;
     return `<div class="item-row card-preview-row${archived?' archived-row':''}">
       <div class="item-main" style="cursor:default;">
+        ${thumb?`<img class="card-thumb" src="${thumb}">`:''}
         <div class="item-text">
           <div class="card-preview-front">${escapeHtml(c.front)}</div>
           <div class="card-preview-back">${escapeHtml(c.back)}</div>
           ${metaBits.length?`<div class="item-meta">${metaBits.join(' ')}</div>`:''}
         </div>
       </div>
-      ${ownerMode ? `<div class="item-actions">
-        ${archived
-          ? `<button class="btn btn-sm btn-ghost" data-action="restore-card" data-id="${c.id}">Restaurar</button>
-             <button class="btn btn-sm btn-danger" data-action="delete-card" data-id="${c.id}">Excluir</button>`
-          : `<button class="btn-icon" data-action="edit-card" data-id="${c.id}" title="Editar">✏️</button>
-             <button class="btn-icon" data-action="archive-card" data-id="${c.id}" title="Arquivar">🗄️</button>
-             <button class="btn-icon" data-action="delete-card" data-id="${c.id}" title="Excluir permanentemente">🗑️</button>`
-        }
-      </div>` : ''}
+      <div class="item-actions">
+        ${!archived ? `<button class="btn-icon" data-action="reset-card" data-id="${c.id}" title="Resetar progresso">🔄</button>` : ''}
+        ${ownerMode
+          ? (archived
+            ? `<button class="btn btn-sm btn-ghost" data-action="restore-card" data-id="${c.id}">Restaurar</button>
+               <button class="btn btn-sm btn-danger" data-action="delete-card" data-id="${c.id}">Excluir</button>`
+            : `<button class="btn-icon" data-action="edit-card" data-id="${c.id}" title="Editar">✏️</button>
+               <button class="btn-icon" data-action="archive-card" data-id="${c.id}" title="Arquivar">🗄️</button>
+               <button class="btn-icon" data-action="delete-card" data-id="${c.id}" title="Excluir permanentemente">🗑️</button>`
+          ) : ''}
+      </div>
     </div>`;
   }
 
@@ -1879,15 +1988,18 @@
       if(!session.revealed){
         html += `<div class="flashcard" data-action="reveal-card">
           <span class="side-label">Pergunta</span>
+          ${cardData.frontImage?`<img class="flashcard-image" src="${cardData.frontImage}">`:''}
           <div>${escapeHtml(cardData.front)}</div>
           <span class="tap-hint">Toque para revelar a resposta</span>
         </div>`;
       }else{
         html += `<div class="flashcard revealed">
           <span class="side-label">Pergunta</span>
+          ${cardData.frontImage?`<img class="flashcard-image" src="${cardData.frontImage}">`:''}
           <div class="front-recap">${escapeHtml(cardData.front)}</div>
           <div class="back-divider"></div>
           <span class="side-label side-label-inline">Resposta</span>
+          ${cardData.backImage?`<img class="flashcard-image" src="${cardData.backImage}">`:''}
           <div>${escapeHtml(cardData.back)}</div>
         </div>`;
       }
@@ -2067,6 +2179,35 @@
       case 'open-import': {
         const found = findAula(view.id);
         if(found) openImportModal(found.aula);
+        break;
+      }
+
+      case 'reset-modulo': {
+        const m = getModulo(id);
+        if(m) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards do módulo <b>${escapeHtml(m.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todas as disciplinas, aulas e cards dessa pasta serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
+          resetCardsProgress(cardsOfModulo(m));
+        });
+        break;
+      }
+      case 'reset-discipline': {
+        const found = findDiscipline(id);
+        if(found) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards da disciplina <b>${escapeHtml(found.discipline.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todas as aulas e cards dessa subpasta serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
+          resetCardsProgress(cardsOfDiscipline(found.discipline));
+        });
+        break;
+      }
+      case 'reset-aula': {
+        const found = findAula(id);
+        if(found) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards da aula <b>${escapeHtml(found.aula.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todos os cards dessa aula serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
+          resetCardsProgress(found.aula.cards);
+        });
+        break;
+      }
+      case 'reset-card': {
+        const found = findCard(id);
+        if(found) openResetConfirmModal(`Resetar o progresso de estudo deste card? O histórico de acerto/erro e o agendamento de revisão espaçada dele serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
+          resetCardsProgress([found.card]);
+        });
         break;
       }
 
