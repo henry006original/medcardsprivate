@@ -155,6 +155,10 @@
   .empty-state h3{color:var(--text);margin:0 0 6px;font-size:18px;}
   .empty-state p{margin:0 0 20px;font-size:14px;}
 
+  /* Sort control */
+  .sort-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+  .sort-control select{width:auto;}
+
   /* Cards list */
   .card-list{display:flex;flex-direction:column;gap:10px;}
   .item-row{
@@ -167,6 +171,11 @@
   }
   .item-row:hover{border-color:#33334a;background:var(--surface2);}
   .item-row.archived-row{opacity:.5;}
+  .item-row[draggable="true"]{cursor:grab;}
+  .item-row.dragging{opacity:.35;}
+  .item-row.drag-over{outline:2px dashed var(--accent);}
+  .item-row.drag-over.drop-before{box-shadow:inset 0 3px 0 0 var(--accent);}
+  .item-row.drag-over.drop-after{box-shadow:inset 0 -3px 0 0 var(--accent);}
   .item-main{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:12px;}
   .item-emoji{
     width:42px;height:42px;border-radius:12px;
@@ -183,6 +192,7 @@
   .card-preview-front{font-weight:600;font-size:15px;}
   .card-preview-back{font-size:13px;color:var(--text-secondary);margin-top:3px;}
   .card-thumb{width:42px;height:42px;border-radius:10px;object-fit:cover;flex-shrink:0;}
+  .seen-toggle.seen{background:#22c55e22;color:#4ade80;}
 
   /* Badges */
   .badge{
@@ -388,9 +398,7 @@
   }
 
   const OWNER_ONLY_ACTIONS = new Set([
-    'new-modulo','edit-modulo','archive-modulo','restore-modulo','delete-modulo',
-    'new-discipline','edit-discipline','archive-discipline','restore-discipline','delete-discipline',
-    'new-aula','edit-aula','archive-aula','restore-aula','delete-aula',
+    'new-folder','edit-folder','archive-folder','restore-folder','delete-folder',
     'new-card','edit-card','archive-card','restore-card','delete-card',
     'open-import','edit-study-card','quick-card','quick-import'
   ]);
@@ -505,12 +513,13 @@
           else { ownerPin = null; sessionStorage.removeItem('mc_owner_pin'); }
         }
       }
-      state.modulos = Array.isArray(data.modulos) ? data.modulos : [];
-      applyLocalProgress(state.modulos);
+      state.root = { sortMode: data.rootSortMode || 'manual', folders: normalizeFolders(data) };
+      applyLocalProgress(state.root.folders);
+      applyLocalSeen(state.root.folders);
       state.streak = loadLocalStreak();
       view = { type:'library' };
       render();
-      if(migrateSrs(state.modulos)) saveContent();
+      if(migrateSrs(state.root.folders)) saveContent();
     }catch(err){
       if(err && err.code === 401){
         ownerPin = null;
@@ -522,11 +531,43 @@
   }
 
   /* ---------------- State (content lives on the server; only per-device study progress is local) ---------------- */
-  // Hierarquia: Módulo (ex: SAI) -> Disciplina (ex: Otorrino) -> Aula -> Card
-  let state = { modulos: [], streak: { count: 0, lastDate: null } };
+  // Hierarquia: Pasta (recursiva, pode ter subpastas e/ou cards em qualquer profundidade)
+  let state = { root: { sortMode:'manual', folders: [] }, streak: { count: 0, lastDate: null } };
+
+  // Legacy payloads used a fixed 3-level shape (modulos > disciplinas > aulas > cards).
+  // Converts that into the generic folder tree on read; once anything is saved again
+  // it's written back in the new {folders,rootSortMode} shape, so this only ever runs
+  // against old data that hasn't been touched since the upgrade.
+  function normalizeFolders(data){
+    if(Array.isArray(data.folders)) return data.folders;
+    const modulos = Array.isArray(data.modulos) ? data.modulos : [];
+    return modulos.map(folderFromLegacyModulo);
+  }
+  function folderFromLegacyModulo(m){
+    return {
+      id: m.id, name: m.name, emoji: m.emoji, color: m.color, archived: !!m.archived, sortMode: 'manual',
+      cards: [],
+      folders: (m.disciplinas||[]).map(d => ({
+        id: d.id, name: d.name, emoji: d.emoji, color: d.color, archived: !!d.archived, sortMode: 'manual',
+        cards: [],
+        folders: (d.aulas||[]).map(a => ({
+          id: a.id, name: a.name, emoji: '📘', color: '#6366f1', archived: !!a.archived, sortMode: 'manual',
+          cards: (a.cards||[]).slice(),
+          folders: []
+        }))
+      }))
+    };
+  }
 
   function uid(){
     return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10);
+  }
+
+  function forEachCard(folders, fn){
+    folders.forEach(f=>{
+      f.cards.forEach(fn);
+      forEachCard(f.folders, fn);
+    });
   }
 
   function loadLocalProgress(){
@@ -534,17 +575,50 @@
   }
   let localProgress = loadLocalProgress();
   function saveLocalProgress(){ localStorage.setItem('mc_progress', JSON.stringify(localProgress)); }
-  function applyLocalProgress(modulos){
-    modulos.forEach(m=>m.disciplinas.forEach(d=>d.aulas.forEach(a=>a.cards.forEach(c=>{
+  function applyLocalProgress(folders){
+    forEachCard(folders, c=>{
       const p = localProgress[c.id];
       c.lastResult = p ? p.lastResult : null;
       c.lastStudiedAt = p ? p.lastStudiedAt : null;
-    }))));
+    });
   }
   function setCardProgress(cardId, lastResult, lastStudiedAt){
     if(lastResult == null) delete localProgress[cardId];
     else localProgress[cardId] = { lastResult, lastStudiedAt };
     saveLocalProgress();
+  }
+
+  // "Já vi" is a manual bookmark, independent of study sessions/srs — just a
+  // per-device flag so anyone (owner or not, no PIN needed) can mark a card as
+  // reviewed without it ever touching the shared cloud content.
+  function loadLocalSeen(){
+    try{ return JSON.parse(localStorage.getItem('mc_seen')) || {}; }catch(e){ return {}; }
+  }
+  let localSeenStore = loadLocalSeen();
+  function saveLocalSeenStore(){ localStorage.setItem('mc_seen', JSON.stringify(localSeenStore)); }
+  function applyLocalSeen(folders){
+    forEachCard(folders, c=>{ c.seen = !!localSeenStore[c.id]; });
+  }
+  function toggleCardSeen(cardId){
+    const found = findCard(cardId);
+    if(!found) return;
+    const next = !found.card.seen;
+    found.card.seen = next;
+    if(next) localSeenStore[cardId] = true; else delete localSeenStore[cardId];
+    saveLocalSeenStore();
+    render();
+  }
+
+  // Unlike the public file, srs lives in the synced content itself here (this
+  // file is already gated behind the owner PIN just to view, so there's no
+  // "everyone answering collides in one schedule" problem to avoid).
+  // Returns true if any card was missing srs and got migrated (caller should persist).
+  function migrateSrs(folders){
+    let migrated = false;
+    forEachCard(folders, c=>{
+      if(!c.srs){ c.srs = createSrs(); migrated = true; }
+    });
+    return migrated;
   }
 
   function loadLocalStreak(){
@@ -565,7 +639,7 @@
 
   // Coalescing save queue: rapid consecutive edits must never race over the
   // network and let a stale snapshot overwrite a newer one. At most one
-  // request is ever in flight; each send captures state.modulos fresh at the
+  // request is ever in flight; each send captures state.root fresh at the
   // moment it actually goes out, and any edits queued up while a request was
   // in flight trigger exactly one more send with the latest state.
   let saveInFlight = false;
@@ -587,14 +661,14 @@
   async function performSave(){
     setSaveStatus('Salvando…');
     try{
-      const cleanModulos = JSON.parse(JSON.stringify(state.modulos));
-      cleanModulos.forEach(m=>m.disciplinas.forEach(d=>d.aulas.forEach(a=>a.cards.forEach(c=>{
-        c.lastResult = null; c.lastStudiedAt = null;
-      }))));
+      const cleanFolders = JSON.parse(JSON.stringify(state.root.folders));
+      forEachCard(cleanFolders, c=>{
+        c.lastResult = null; c.lastStudiedAt = null; c.seen = null;
+      });
       const path = API_SPACE === 'public' ? '/public' : '/private/save';
       const res = await fetch(API_BASE + path, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pin: ownerPin, data: { modulos: cleanModulos } })
+        body: JSON.stringify({ pin: ownerPin, data: { folders: cleanFolders, rootSortMode: state.root.sortMode } })
       });
       if(res.status === 401){
         setSaveStatus('⚠️ PIN inválido', true);
@@ -667,37 +741,65 @@
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  function getModulo(id){ return state.modulos.find(m=>m.id===id); }
-  function findDiscipline(disciplineId){
-    for(const m of state.modulos){
-      const d = m.disciplinas.find(x=>x.id===disciplineId);
-      if(d) return {modulo:m, discipline:d};
-    }
-    return null;
-  }
-  function findAula(aulaId){
-    for(const m of state.modulos){
-      for(const d of m.disciplinas){
-        const a = d.aulas.find(x=>x.id===aulaId);
-        if(a) return {modulo:m, discipline:d, aula:a};
+  /* ---------------- Folder / card lookup (generic recursive tree) ---------------- */
+  function findFolder(folderId){
+    function search(list, parent){
+      for(const f of list){
+        if(f.id === folderId) return { folder:f, parent, list };
+        const found = search(f.folders, f);
+        if(found) return found;
       }
+      return null;
     }
-    return null;
+    return search(state.root.folders, state.root);
+  }
+  function findFolderPath(folderId){
+    function search(list, path){
+      for(const f of list){
+        if(f.id === folderId) return path.concat([f]);
+        const sub = search(f.folders, path.concat([f]));
+        if(sub) return sub;
+      }
+      return null;
+    }
+    return search(state.root.folders, []);
   }
   function findCard(cardId){
-    for(const m of state.modulos){
-      for(const d of m.disciplinas){
-        for(const a of d.aulas){
-          const c = a.cards.find(x=>x.id===cardId);
-          if(c) return {modulo:m, discipline:d, aula:a, card:c};
-        }
+    function search(list){
+      for(const f of list){
+        const c = f.cards.find(x=>x.id===cardId);
+        if(c) return { folder:f, card:c };
+        const found = search(f.folders);
+        if(found) return found;
       }
+      return null;
     }
-    return null;
+    return search(state.root.folders);
+  }
+  function allCardsUnder(folder){
+    let out = folder.cards.slice();
+    folder.folders.forEach(f=>{ out = out.concat(allCardsUnder(f)); });
+    return out;
   }
 
-  function cardsOfModulo(m){ return m.disciplinas.flatMap(d=>d.aulas.flatMap(a=>a.cards)); }
-  function cardsOfDiscipline(d){ return d.aulas.flatMap(a=>a.cards); }
+  // Manual order is just live array order (rearranged in place by drag&drop).
+  // Alphabetical/date views sort a display copy without touching that order,
+  // so switching back to "Manual" always shows exactly what was last arranged.
+  function idTimestamp(id){
+    // Only ids from uid() (id_<base36 ts>_<rand>) carry a real timestamp — ids from
+    // migrated legacy data (e.g. "mod1") don't, and must not be treated as one: base36
+    // happily "parses" arbitrary text like "undefined" into a bogus huge number.
+    const m = /^id_([0-9a-z]+)_/.exec(String(id));
+    if(!m) return 0;
+    const n = parseInt(m[1], 36);
+    return isNaN(n) ? 0 : n;
+  }
+  function sortItems(list, sortMode, getKey){
+    if(sortMode === 'alpha') return list.sort((a,b)=> getKey(a).localeCompare(getKey(b), 'pt-BR'));
+    if(sortMode === 'created-asc') return list.sort((a,b)=> idTimestamp(a.id) - idTimestamp(b.id));
+    if(sortMode === 'created-desc') return list.sort((a,b)=> idTimestamp(b.id) - idTimestamp(a.id));
+    return list;
+  }
 
   // Resets study history for a set of cards: last answer (per-device, mc_progress)
   // and spaced-repetition schedule back to "new". Here srs lives in the synced
@@ -711,14 +813,12 @@
   }
 
   /* ---------------- View / navigation state ---------------- */
-  // {type:'library'} | {type:'modulo',id} | {type:'discipline',id} | {type:'aula',id} | {type:'study',aulaId}
+  // {type:'library'} | {type:'folder',id} | {type:'study',folderId}
   let view = { type:'library' };
   const uiState = { openArchives: {} }; // key -> bool
 
   function goLibrary(){ view = {type:'library'}; render(); }
-  function goModulo(id){ view = {type:'modulo', id}; render(); }
-  function goDiscipline(id){ view = {type:'discipline', id}; render(); }
-  function goAula(id){ view = {type:'aula', id}; render(); }
+  function goFolder(id){ view = {type:'folder', id}; render(); }
 
   let session = null; // active study session object
 
@@ -740,7 +840,7 @@
     });
   }
 
-  /* ---------- Módulo / Disciplina modal (shared: both have nome + emoji + cor) ---------- */
+  /* ---------- Pasta modal (nome + emoji + cor) ---------- */
   const EMOJI_PRESETS = ['📁','🩺','🏥','🚑','❤️','🧠','🦴','🦵','💪','💊','💉','🔬','🧬','🧫','🧪','🔍','📊','📚','🦠','😷','👁️','👓','👂','👃','🦷','🌡️','🩸','🩹','🧴','👶','🧒','🤰','🌸','🧓','🛋️','💭','🗣️','🏘️','🤝','📋','🌱','📢'];
   const COLOR_PRESETS = ['#6366f1','#4f46e5','#3b82f6','#1d4ed8','#0ea5e9','#0284c7','#06b6d4','#0891b2','#14b8a6','#0f766e','#22c55e','#15803d','#84cc16','#4d7c0f','#eab308','#ca8a04','#f59e0b','#f97316','#c2410c','#ef4444','#b91c1c','#f43f5e','#be123c','#ec4899','#db2777','#f472b6','#c026d3','#a21caf','#8b5cf6','#7c3aed','#94a3b8','#475569'];
 
@@ -804,125 +904,48 @@
     });
   }
 
-  function openModuloModal(existing){
+  function openFolderModal(parentList, existing){
     openEntityModal({
-      titleCreate: 'Novo módulo', titleEdit: 'Editar módulo', existing,
-      placeholderName: 'Ex: SAI',
-      onSave: (nameVal, emojiVal, colorVal, isEdit)=>{
-        if(isEdit){
-          existing.name = nameVal; existing.emoji = emojiVal; existing.color = colorVal;
-        }else{
-          state.modulos.push({ id: uid(), name: nameVal, emoji: emojiVal, color: colorVal, archived:false, disciplinas:[] });
-        }
-      }
-    });
-  }
-
-  function openDisciplinaModal(modulo, existing){
-    openEntityModal({
-      titleCreate: 'Nova disciplina', titleEdit: 'Editar disciplina', existing,
+      titleCreate: 'Nova pasta', titleEdit: 'Editar pasta', existing,
       placeholderName: 'Ex: Otorrinolaringologia',
       onSave: (nameVal, emojiVal, colorVal, isEdit)=>{
         if(isEdit){
           existing.name = nameVal; existing.emoji = emojiVal; existing.color = colorVal;
         }else{
-          modulo.disciplinas.push({ id: uid(), name: nameVal, emoji: emojiVal, color: colorVal, archived:false, aulas:[] });
+          parentList.push({ id: uid(), name: nameVal, emoji: emojiVal, color: colorVal, archived:false, sortMode:'manual', folders:[], cards:[] });
         }
       }
     });
   }
 
-  /* ---------- Quick card creation: fill in whatever containers are missing
-     below the current level with a reusable "Geral" bucket, so a card can be
-     created from the Biblioteca, a módulo, or a disciplina without manually
-     building the full hierarchy first. ---------- */
+  /* ---------- Quick card creation: at the library root (which only holds
+     folders, never cards directly) this drops a card into a reusable "Geral"
+     top-level folder so a card can be created without first building any
+     structure. Inside any folder, cards go straight into it — no default
+     bucket needed there since every folder can already hold cards. ---------- */
   const QUICK_DEFAULT_NAME = 'Geral';
   const QUICK_DEFAULT_EMOJI = '⚡';
   const QUICK_DEFAULT_COLOR = '#94a3b8';
 
-  function getOrCreateDefaultModulo(){
-    let m = state.modulos.find(x=>x.name===QUICK_DEFAULT_NAME && !x.archived);
-    if(!m){
-      m = { id: uid(), name: QUICK_DEFAULT_NAME, emoji: QUICK_DEFAULT_EMOJI, color: QUICK_DEFAULT_COLOR, archived:false, disciplinas:[] };
-      state.modulos.push(m);
+  function getOrCreateDefaultRootFolder(){
+    let f = state.root.folders.find(x=>x.name===QUICK_DEFAULT_NAME && !x.archived);
+    if(!f){
+      f = { id: uid(), name: QUICK_DEFAULT_NAME, emoji: QUICK_DEFAULT_EMOJI, color: QUICK_DEFAULT_COLOR, archived:false, sortMode:'manual', folders:[], cards:[] };
+      state.root.folders.push(f);
     }
-    return m;
-  }
-  function getOrCreateDefaultDisciplina(modulo){
-    let d = modulo.disciplinas.find(x=>x.name===QUICK_DEFAULT_NAME && !x.archived);
-    if(!d){
-      d = { id: uid(), name: QUICK_DEFAULT_NAME, emoji: QUICK_DEFAULT_EMOJI, color: QUICK_DEFAULT_COLOR, archived:false, aulas:[] };
-      modulo.disciplinas.push(d);
-    }
-    return d;
-  }
-  function getOrCreateDefaultAula(discipline){
-    let a = discipline.aulas.find(x=>x.name===QUICK_DEFAULT_NAME && !x.archived);
-    if(!a){
-      a = { id: uid(), name: QUICK_DEFAULT_NAME, archived:false, cards:[] };
-      discipline.aulas.push(a);
-    }
-    return a;
+    return f;
   }
 
-  function resolveQuickAula(level, id){
-    if(level==='library'){
-      const m = getOrCreateDefaultModulo();
-      const d = getOrCreateDefaultDisciplina(m);
-      return getOrCreateDefaultAula(d);
-    }else if(level==='modulo'){
-      const m = getModulo(id);
-      if(!m) return null;
-      const d = getOrCreateDefaultDisciplina(m);
-      return getOrCreateDefaultAula(d);
-    }else if(level==='discipline'){
-      const found = findDiscipline(id);
-      if(!found) return null;
-      return getOrCreateDefaultAula(found.discipline);
-    }
-    return null;
-  }
-
-  function quickNewCard(level, id){
-    const aula = resolveQuickAula(level, id);
-    if(!aula) return;
+  function quickNewCard(){
+    const folder = getOrCreateDefaultRootFolder();
     saveContent();
-    openCardModal(aula, null, { onSaved: ()=> goAula(aula.id) });
+    openCardModal(folder, null, { onSaved: ()=> goFolder(folder.id) });
   }
 
-  function quickImportCards(level, id){
-    const aula = resolveQuickAula(level, id);
-    if(!aula) return;
+  function quickImportCards(){
+    const folder = getOrCreateDefaultRootFolder();
     saveContent();
-    openImportModal(aula, { onImported: ()=> goAula(aula.id) });
-  }
-
-  /* ---------- Aula modal ---------- */
-  function openAulaModal(discipline, existing){
-    const isEdit = !!existing;
-    openModal(`
-      <div class="modal-title">${isEdit?'Editar aula':'Nova aula'}</div>
-      <div class="form-group">
-        <label class="form-label">Nome da aula</label>
-        <input type="text" id="f-aula-name" placeholder="Ex: Arritmias cardíacas" value="${escapeHtml(existing?existing.name:'')}" maxlength="80">
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-        <button class="btn btn-primary" id="save-aula-btn">${isEdit?'Salvar':'Criar'}</button>
-      </div>
-    `);
-    const input = document.getElementById('f-aula-name');
-    input.focus();
-    document.getElementById('save-aula-btn').addEventListener('click', ()=>{
-      const nameVal = input.value.trim();
-      if(!nameVal){ input.focus(); return; }
-      if(isEdit){
-        existing.name = nameVal;
-      }else{
-        discipline.aulas.push({ id: uid(), name: nameVal, archived:false, cards:[] });
-      }
-      saveContent(); closeModal(); render();
-    });
+    openImportModal(folder, { onImported: ()=> goFolder(folder.id) });
   }
 
   /* ---------- Card image upload: downscaled + re-encoded client-side before it
@@ -991,7 +1014,7 @@
   }
 
   /* ---------- Card modal ---------- */
-  function openCardModal(aula, existing, opts){
+  function openCardModal(folder, existing, opts){
     opts = opts || {};
     const isEdit = !!existing;
     let frontImage = isEdit ? (existing.frontImage || null) : null;
@@ -1024,7 +1047,7 @@
         existing.front = front; existing.back = back;
         existing.frontImage = frontImage; existing.backImage = backImage;
       }else{
-        aula.cards.push({ id: uid(), front, back, frontImage, backImage, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
+        folder.cards.push({ id: uid(), front, back, frontImage, backImage, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
       }
       saveContent(); closeModal();
       if(opts.onSaved) opts.onSaved(); else render();
@@ -1054,7 +1077,7 @@
   }
 
   /* ---------- Import modal ---------- */
-  function openImportModal(aula, opts){
+  function openImportModal(folder, opts){
     opts = opts || {};
     openModal(`
       <div class="modal-title">Importar cards em massa</div>
@@ -1157,7 +1180,7 @@
     confirmBtn.addEventListener('click', ()=>{
       if(currentValid.length===0) return;
       currentValid.forEach(c=>{
-        aula.cards.push({ id: uid(), front:c.front, back:c.back, frontImage:null, backImage:null, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
+        folder.cards.push({ id: uid(), front:c.front, back:c.back, frontImage:null, backImage:null, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
       });
       saveContent(); closeModal();
       if(opts.onImported) opts.onImported(); else render();
@@ -1243,9 +1266,7 @@
 
   function render(){
     if(view.type==='library') renderLibrary();
-    else if(view.type==='modulo') renderModuloView();
-    else if(view.type==='discipline') renderDisciplineView();
-    else if(view.type==='aula') renderAulaView();
+    else if(view.type==='folder') renderFolderView();
     else if(view.type==='study') renderStudyView();
     renderStreakBadge();
     updateOwnerLockBtn();
@@ -1266,43 +1287,61 @@
     return html;
   }
 
+  const SORT_OPTIONS = [
+    {v:'manual', label:'Manual (arraste pra reordenar)'},
+    {v:'alpha', label:'Alfabética (A-Z)'},
+    {v:'created-asc', label:'Mais antigos primeiro'},
+    {v:'created-desc', label:'Mais recentes primeiro'}
+  ];
+  function renderSortControl(target){
+    // target: a folder object, or the string 'root' for the library level
+    const isRoot = target === 'root';
+    const sortMode = (isRoot ? state.root.sortMode : target.sortMode) || 'manual';
+    const idAttr = isRoot ? 'root' : target.id;
+    return `<div class="sort-control">
+      <label class="form-label" style="margin:0;">⇕ Ordenar por</label>
+      <select data-action="set-sort-mode" data-id="${idAttr}" ${ownerMode?'':'disabled'}>
+        ${SORT_OPTIONS.map(o=>`<option value="${o.v}"${o.v===sortMode?' selected':''}>${o.label}</option>`).join('')}
+      </select>
+    </div>`;
+  }
+
   function renderLibrary(){
-    const active = state.modulos.filter(m=>!m.archived);
-    const archived = state.modulos.filter(m=>m.archived);
+    const active = state.root.folders.filter(f=>!f.archived);
+    const archived = state.root.folders.filter(f=>f.archived);
 
     let html = renderBreadcrumb([{label:'Biblioteca'}]);
-    html += `<h1 class="page-title">Biblioteca</h1><p class="page-sub">Seus módulos de estudo</p>`;
+    html += `<h1 class="page-title">Biblioteca</h1><p class="page-sub">Suas pastas de estudo</p>`;
     if(ownerMode){
       html += `<div class="toolbar">
-        <button class="btn btn-primary" data-action="new-modulo">+ Novo módulo</button>
-        <button class="btn btn-ghost" data-action="quick-card" data-level="library">⚡ Novo card rápido</button>
-        <button class="btn btn-ghost" data-action="quick-import" data-level="library">⇪ Importar</button>
+        <button class="btn btn-primary" data-action="new-folder">+ Nova pasta</button>
+        <button class="btn btn-ghost" data-action="quick-card">⚡ Novo card rápido</button>
+        <button class="btn btn-ghost" data-action="quick-import">⇪ Importar</button>
       </div>`;
     }
 
     if(active.length===0 && archived.length===0){
       html += `<div class="empty-state">
         <span class="emoji">📁</span>
-        <h3>Nenhum módulo ainda</h3>
-        <p>${ownerMode ? 'Crie seu primeiro módulo (ex: SAI) para organizar as disciplinas dentro dele.' : 'Ainda não há nada para estudar aqui.'}</p>
-        ${ownerMode ? `<button class="btn btn-primary" data-action="new-modulo">+ Novo módulo</button>` : ''}
+        <h3>Nenhuma pasta ainda</h3>
+        <p>${ownerMode ? 'Crie sua primeira pasta pra organizar seus estudos. Dentro dela você pode criar mais subpastas ou cards, sem limite de profundidade.' : 'Ainda não há nada para estudar aqui.'}</p>
+        ${ownerMode ? `<button class="btn btn-primary" data-action="new-folder">+ Nova pasta</button>` : ''}
       </div>`;
     }else{
+      html += renderSortControl('root');
       html += '<div class="card-list">';
       if(active.length===0){
-        html += `<div class="empty-state" style="padding:24px;"><p>Todos os módulos estão arquivados.</p></div>`;
+        html += `<div class="empty-state" style="padding:24px;"><p>Todas as pastas estão arquivadas.</p></div>`;
       }
-      active.forEach(m=>{
-        html += moduloRow(m,false);
-      });
+      sortItems(active, state.root.sortMode, x=>x.name).forEach(f=>{ html += folderRow(f,false); });
       html += '</div>';
 
       if(ownerMode && archived.length>0){
         const open = !!uiState.openArchives['lib'];
-        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="lib"><span class="chev">▶</span> Arquivados (${archived.length})</button>`;
+        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="lib"><span class="chev">▶</span> Arquivadas (${archived.length})</button>`;
         if(open){
           html += '<div class="archive-section">';
-          archived.forEach(m=>{ html += moduloRow(m,true); });
+          archived.forEach(f=>{ html += folderRow(f,true); });
           html += '</div>';
         }
       }
@@ -1310,196 +1349,64 @@
     appEl.innerHTML = html;
   }
 
-  function moduloRow(m, archived){
-    const discCount = m.disciplinas.filter(d=>!d.archived).length;
-    return `<div class="item-row${archived?' archived-row':''}">
-      <div class="accent-bar" style="background:${m.color}"></div>
-      <div class="item-main" data-action="${archived?'noop':'open-modulo'}" data-id="${m.id}">
-        <div class="item-emoji" style="background:${m.color};box-shadow:0 2px 8px ${m.color}55;">${m.emoji}</div>
+  function folderRow(f, archived){
+    const subCount = f.folders.filter(x=>!x.archived).length;
+    const cardCount = f.cards.filter(c=>!c.archived).length;
+    const parts = [];
+    if(subCount) parts.push(`${subCount} pasta${subCount===1?'':'s'}`);
+    if(cardCount) parts.push(`${cardCount} card${cardCount===1?'':'s'}`);
+    const metaText = parts.length ? parts.join(' · ') : 'Vazia';
+    const dragAttrs = (!archived && ownerMode) ? `draggable="true" data-drag-type="folder" data-drag-id="${f.id}"` : '';
+    return `<div class="item-row${archived?' archived-row':''}" ${dragAttrs} ${!archived?`data-drop-folder="${f.id}"`:''}>
+      <div class="accent-bar" style="background:${f.color}"></div>
+      <div class="item-main" data-action="${archived?'noop':'open-folder'}" data-id="${f.id}">
+        <div class="item-emoji" style="background:${f.color};box-shadow:0 2px 8px ${f.color}55;">${f.emoji}</div>
         <div class="item-text">
-          <div class="item-title">${escapeHtml(m.name)}</div>
-          <div class="item-meta">${discCount} disciplina${discCount===1?'':'s'}</div>
+          <div class="item-title">${escapeHtml(f.name)}</div>
+          <div class="item-meta">${metaText}</div>
         </div>
       </div>
       <div class="item-actions">
-        ${!archived ? `<button class="btn-icon" data-action="reset-modulo" data-id="${m.id}" title="Resetar progresso">🔄</button>` : ''}
+        ${!archived ? `<button class="btn-icon" data-action="reset-folder" data-id="${f.id}" title="Resetar progresso">🔄</button>` : ''}
         ${ownerMode
           ? (archived
-            ? `<button class="btn btn-sm btn-ghost" data-action="restore-modulo" data-id="${m.id}">Restaurar</button>
-               <button class="btn btn-sm btn-danger" data-action="delete-modulo" data-id="${m.id}">Excluir</button>`
-            : `<button class="btn-icon" data-action="edit-modulo" data-id="${m.id}" title="Editar">✏️</button>
-               <button class="btn-icon" data-action="archive-modulo" data-id="${m.id}" title="Arquivar">🗄️</button>
-               <button class="btn-icon" data-action="delete-modulo" data-id="${m.id}" title="Excluir permanentemente">🗑️</button>`
+            ? `<button class="btn btn-sm btn-ghost" data-action="restore-folder" data-id="${f.id}">Restaurar</button>
+               <button class="btn btn-sm btn-danger" data-action="delete-folder" data-id="${f.id}">Excluir</button>`
+            : `<button class="btn-icon" data-action="edit-folder" data-id="${f.id}" title="Editar">✏️</button>
+               <button class="btn-icon" data-action="archive-folder" data-id="${f.id}" title="Arquivar">🗄️</button>
+               <button class="btn-icon" data-action="delete-folder" data-id="${f.id}" title="Excluir permanentemente">🗑️</button>`
           ) : ''}
       </div>
     </div>`;
   }
 
-  function renderModuloView(){
-    const m = getModulo(view.id);
-    if(!m){ goLibrary(); return; }
-    const active = m.disciplinas.filter(d=>!d.archived);
-    const archived = m.disciplinas.filter(d=>d.archived);
-
-    let html = renderBreadcrumb([
-      {label:'Biblioteca', action:'go-library'},
-      {label:m.name}
-    ]);
-    html += `<h1 class="page-title">${m.emoji} ${escapeHtml(m.name)}</h1><p class="page-sub">${active.length} disciplina${active.length===1?'':'s'}</p>`;
-    html += `<div class="toolbar">
-      ${ownerMode ? `<button class="btn btn-primary" data-action="new-discipline">+ Nova disciplina</button>
-      <button class="btn btn-ghost" data-action="quick-card" data-level="modulo" data-id="${m.id}">⚡ Novo card rápido</button>
-      <button class="btn btn-ghost" data-action="quick-import" data-level="modulo" data-id="${m.id}">⇪ Importar</button>
-      <button class="btn btn-ghost" data-action="edit-modulo" data-id="${m.id}">Editar módulo</button>` : ''}
-      <button class="btn btn-ghost" data-action="export-modulo" data-id="${m.id}">⇩ Exportar tudo</button>
-      <button class="btn btn-ghost" data-action="reset-modulo" data-id="${m.id}">🔄 Resetar progresso</button>
-    </div>`;
-
-    if(active.length===0 && archived.length===0){
-      html += `<div class="empty-state">
-        <span class="emoji">📚</span>
-        <h3>Nenhuma disciplina ainda</h3>
-        <p>${ownerMode ? 'Adicione a primeira disciplina deste módulo (ex: Otorrino, Oftalmo).' : 'Ainda não há nada para estudar aqui.'}</p>
-        ${ownerMode ? `<button class="btn btn-primary" data-action="new-discipline">+ Nova disciplina</button>` : ''}
-      </div>`;
-    }else{
-      html += '<div class="card-list">';
-      if(active.length===0){
-        html += `<div class="empty-state" style="padding:24px;"><p>Todas as disciplinas estão arquivadas.</p></div>`;
-      }
-      active.forEach(d=>{ html += disciplineRow(d,false); });
-      html += '</div>';
-
-      if(ownerMode && archived.length>0){
-        const open = !!uiState.openArchives['mod_'+m.id];
-        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="mod_${m.id}"><span class="chev">▶</span> Arquivadas (${archived.length})</button>`;
-        if(open){
-          html += '<div class="archive-section">';
-          archived.forEach(d=>{ html += disciplineRow(d,true); });
-          html += '</div>';
-        }
-      }
-    }
-    appEl.innerHTML = html;
-  }
-
-  function disciplineRow(d, archived){
-    const aulaCount = d.aulas.filter(a=>!a.archived).length;
-    return `<div class="item-row${archived?' archived-row':''}">
-      <div class="accent-bar" style="background:${d.color}"></div>
-      <div class="item-main" data-action="${archived?'noop':'open-discipline'}" data-id="${d.id}">
-        <div class="item-emoji" style="background:${d.color}22;">${d.emoji}</div>
-        <div class="item-text">
-          <div class="item-title">${escapeHtml(d.name)}</div>
-          <div class="item-meta">${aulaCount} aula${aulaCount===1?'':'s'}</div>
-        </div>
-      </div>
-      <div class="item-actions">
-        ${!archived ? `<button class="btn-icon" data-action="reset-discipline" data-id="${d.id}" title="Resetar progresso">🔄</button>` : ''}
-        ${ownerMode
-          ? (archived
-            ? `<button class="btn btn-sm btn-ghost" data-action="restore-discipline" data-id="${d.id}">Restaurar</button>
-               <button class="btn btn-sm btn-danger" data-action="delete-discipline" data-id="${d.id}">Excluir</button>`
-            : `<button class="btn-icon" data-action="edit-discipline" data-id="${d.id}" title="Editar">✏️</button>
-               <button class="btn-icon" data-action="archive-discipline" data-id="${d.id}" title="Arquivar">🗄️</button>
-               <button class="btn-icon" data-action="delete-discipline" data-id="${d.id}" title="Excluir permanentemente">🗑️</button>`
-          ) : ''}
-      </div>
-    </div>`;
-  }
-
-  function renderDisciplineView(){
-    const found = findDiscipline(view.id);
+  function renderFolderView(){
+    const found = findFolder(view.id);
     if(!found){ goLibrary(); return; }
-    const {modulo:m, discipline:d} = found;
-    const active = d.aulas.filter(a=>!a.archived);
-    const archived = d.aulas.filter(a=>a.archived);
+    const f = found.folder;
+    const path = findFolderPath(view.id) || [f];
 
-    let html = renderBreadcrumb([
-      {label:'Biblioteca', action:'go-library'},
-      {label:m.name, action:'open-modulo-'+m.id},
-      {label:d.name}
-    ]);
-    html += `<h1 class="page-title">${d.emoji} ${escapeHtml(d.name)}</h1><p class="page-sub">${active.length} aula${active.length===1?'':'s'}</p>`;
-    html += `<div class="toolbar">
-      ${ownerMode ? `<button class="btn btn-primary" data-action="new-aula">+ Nova aula</button>
-      <button class="btn btn-ghost" data-action="quick-card" data-level="discipline" data-id="${d.id}">⚡ Novo card rápido</button>
-      <button class="btn btn-ghost" data-action="quick-import" data-level="discipline" data-id="${d.id}">⇪ Importar</button>
-      <button class="btn btn-ghost" data-action="edit-discipline" data-id="${d.id}">Editar disciplina</button>` : ''}
-      <button class="btn btn-ghost" data-action="export-discipline" data-id="${d.id}">⇩ Exportar tudo</button>
-      <button class="btn btn-ghost" data-action="reset-discipline" data-id="${d.id}">🔄 Resetar progresso</button>
-    </div>`;
+    const activeSub = f.folders.filter(x=>!x.archived);
+    const archivedSub = f.folders.filter(x=>x.archived);
+    const activeCards = f.cards.filter(c=>!c.archived);
+    const archivedCards = f.cards.filter(c=>c.archived);
+    const allActiveCardsRecursive = allCardsUnder(f).filter(c=>!c.archived);
 
-    if(active.length===0 && archived.length===0){
-      html += `<div class="empty-state">
-        <span class="emoji">📖</span>
-        <h3>Nenhuma aula ainda</h3>
-        <p>${ownerMode ? 'Adicione a primeira aula desta disciplina.' : 'Ainda não há nada para estudar aqui.'}</p>
-        ${ownerMode ? `<button class="btn btn-primary" data-action="new-aula">+ Nova aula</button>` : ''}
-      </div>`;
-    }else{
-      html += '<div class="card-list">';
-      if(active.length===0){
-        html += `<div class="empty-state" style="padding:24px;"><p>Todas as aulas estão arquivadas.</p></div>`;
-      }
-      active.forEach(a=>{ html += aulaRow(a,false); });
-      html += '</div>';
+    let html = renderBreadcrumb(
+      [{label:'Biblioteca', action:'go-library'}].concat(
+        path.map((p,i)=> i===path.length-1 ? {label:p.name} : {label:p.name, action:'open-folder-'+p.id})
+      )
+    );
 
-      if(ownerMode && archived.length>0){
-        const open = !!uiState.openArchives['disc_'+d.id];
-        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="disc_${d.id}"><span class="chev">▶</span> Arquivadas (${archived.length})</button>`;
-        if(open){
-          html += '<div class="archive-section">';
-          archived.forEach(a=>{ html += aulaRow(a,true); });
-          html += '</div>';
-        }
-      }
-    }
-    appEl.innerHTML = html;
-  }
+    const subLabel = activeSub.length ? `${activeSub.length} pasta${activeSub.length===1?'':'s'}` : '';
+    const cardLabel = activeCards.length ? `${activeCards.length} card${activeCards.length===1?'':'s'}` : '';
+    const subLine = [subLabel, cardLabel].filter(Boolean).join(' · ') || 'Pasta vazia';
+    html += `<h1 class="page-title">${f.emoji} ${escapeHtml(f.name)}</h1><p class="page-sub">${subLine}</p>`;
 
-  function aulaRow(a, archived){
-    const cardCount = a.cards.filter(c=>!c.archived).length;
-    return `<div class="item-row${archived?' archived-row':''}">
-      <div class="item-main" data-action="${archived?'noop':'open-aula'}" data-id="${a.id}">
-        <div class="item-emoji" style="background:var(--accent-dim);">📘</div>
-        <div class="item-text">
-          <div class="item-title">${escapeHtml(a.name)}</div>
-          <div class="item-meta">${cardCount} card${cardCount===1?'':'s'}</div>
-        </div>
-      </div>
-      <div class="item-actions">
-        ${!archived ? `<button class="btn-icon" data-action="reset-aula" data-id="${a.id}" title="Resetar progresso">🔄</button>` : ''}
-        ${ownerMode
-          ? (archived
-            ? `<button class="btn btn-sm btn-ghost" data-action="restore-aula" data-id="${a.id}">Restaurar</button>
-               <button class="btn btn-sm btn-danger" data-action="delete-aula" data-id="${a.id}">Excluir</button>`
-            : `<button class="btn-icon" data-action="edit-aula" data-id="${a.id}" title="Editar">✏️</button>
-               <button class="btn-icon" data-action="archive-aula" data-id="${a.id}" title="Arquivar">🗄️</button>
-               <button class="btn-icon" data-action="delete-aula" data-id="${a.id}" title="Excluir permanentemente">🗑️</button>`
-          ) : ''}
-      </div>
-    </div>`;
-  }
-
-  function renderAulaView(){
-    const found = findAula(view.id);
-    if(!found){ goLibrary(); return; }
-    const {modulo:m, discipline:d, aula:a} = found;
-    const active = a.cards.filter(c=>!c.archived);
-    const archived = a.cards.filter(c=>c.archived);
-
-    let html = renderBreadcrumb([
-      {label:'Biblioteca', action:'go-library'},
-      {label:m.name, action:'open-modulo-'+m.id},
-      {label:d.name, action:'open-discipline-'+d.id},
-      {label:a.name}
-    ]);
-    const stats = active.length>0 ? aulaSrsStats(a) : {paraRevisar:0,novos:0,aprendendo:0,noPrazo:0};
-    const dailyAllowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(a.id));
+    const stats = allActiveCardsRecursive.length>0 ? folderSrsStats(f) : {paraRevisar:0,novos:0,aprendendo:0,noPrazo:0};
+    const dailyAllowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(f.id));
     const hasDueNow = stats.paraRevisar>0 || (stats.novos>0 && dailyAllowance>0);
-    html += `<h1 class="page-title">${escapeHtml(a.name)}</h1><p class="page-sub">${active.length} card${active.length===1?'':'s'} ativo${active.length===1?'':'s'}</p>`;
-    if(active.length>0){
+    if(allActiveCardsRecursive.length>0){
       html += `<div class="item-meta" style="margin-bottom:14px;">
         <span class="badge badge-wrong">⏰ ${stats.paraRevisar} p/ revisar</span>
         <span class="badge" style="background:#6366f122;color:#a5b4fc;">🆕 ${stats.novos} novos</span>
@@ -1507,46 +1414,69 @@
         <span class="badge badge-correct">✅ ${stats.noPrazo} no prazo</span>
       </div>`;
     }
+
     html += `<div class="toolbar">
-      ${active.length>0 ? `<button class="btn btn-success" data-action="start-study" data-id="${a.id}" ${!hasDueNow?'disabled':''} title="${hasDueNow?'':'Nada vencido agora — use Revisão Rápida pra estudar tudo mesmo assim'}">🧠 Estudar (Espaçada)</button>
-      <button class="btn btn-ghost" data-action="study-all" data-id="${a.id}">⚡ Estudar (Rápida)</button>
+      ${allActiveCardsRecursive.length>0 ? `<button class="btn btn-success" data-action="start-study" data-id="${f.id}" ${!hasDueNow?'disabled':''} title="${hasDueNow?'':'Nada vencido agora — use Revisão Rápida pra estudar tudo mesmo assim'}">🧠 Estudar (Espaçada)</button>
+      <button class="btn btn-ghost" data-action="study-all" data-id="${f.id}">⚡ Estudar (Rápida)</button>
       <button class="btn-icon" data-action="open-study-settings" title="Configurações de estudo">⚙️</button>` : ''}
-      ${ownerMode ? `<button class="btn btn-primary" data-action="new-card">+ Novo card</button>
-      <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
-      <button class="btn btn-ghost" data-action="edit-aula" data-id="${a.id}">Editar aula</button>` : ''}
-      <button class="btn btn-ghost" data-action="export-aula" data-id="${a.id}">⇩ Exportar</button>
-      <button class="btn btn-ghost" data-action="reset-aula" data-id="${a.id}">🔄 Resetar progresso</button>
+      ${ownerMode ? `<button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
+      <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
+      <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
+      <button class="btn btn-ghost" data-action="edit-folder" data-id="${f.id}">Editar pasta</button>` : ''}
+      <button class="btn btn-ghost" data-action="export-folder" data-id="${f.id}">⇩ Exportar tudo</button>
+      <button class="btn btn-ghost" data-action="reset-folder" data-id="${f.id}">🔄 Resetar progresso</button>
     </div>`;
 
-    if(active.length===0 && archived.length===0){
+    if(activeSub.length===0 && archivedSub.length===0 && activeCards.length===0 && archivedCards.length===0){
       html += `<div class="empty-state">
         <span class="emoji">🗂️</span>
-        <h3>Nenhum card ainda</h3>
-        <p>${ownerMode ? 'Crie cards manualmente ou importe em massa.' : 'Ainda não há nada para estudar aqui.'}</p>
+        <h3>Pasta vazia</h3>
+        <p>${ownerMode ? 'Crie uma subpasta pra organizar, ou adicione cards direto aqui.' : 'Ainda não há nada aqui.'}</p>
         ${ownerMode ? `<div class="toolbar" style="justify-content:center;">
-          <button class="btn btn-primary" data-action="new-card">+ Novo card</button>
-          <button class="btn btn-ghost" data-action="open-import">⇪ Importar</button>
+          <button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
+          <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
+          <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
         </div>` : ''}
       </div>`;
     }else{
-      html += '<div class="card-list">';
-      if(active.length===0){
-        html += `<div class="empty-state" style="padding:24px;"><p>Todos os cards estão arquivados.</p></div>`;
-      }
-      active.forEach(c=>{ html += cardRow(c,false); });
-      html += '</div>';
+      html += renderSortControl(f);
 
-      if(ownerMode && archived.length>0){
-        const open = !!uiState.openArchives['aula_'+a.id];
-        html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="aula_${a.id}"><span class="chev">▶</span> Arquivados (${archived.length})</button>`;
-        if(open){
-          html += '<div class="archive-section">';
-          archived.forEach(c=>{ html += cardRow(c,true); });
-          html += '</div>';
+      if(activeSub.length>0 || archivedSub.length>0){
+        html += '<div class="card-list">';
+        sortItems(activeSub, f.sortMode, x=>x.name).forEach(sf=>{ html += folderRow(sf,false); });
+        html += '</div>';
+        if(ownerMode && archivedSub.length>0){
+          const open = !!uiState.openArchives['subf_'+f.id];
+          html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="subf_${f.id}"><span class="chev">▶</span> Pastas arquivadas (${archivedSub.length})</button>`;
+          if(open){
+            html += '<div class="archive-section">';
+            archivedSub.forEach(sf=>{ html += folderRow(sf,true); });
+            html += '</div>';
+          }
+        }
+      }
+
+      if(activeCards.length>0 || archivedCards.length>0){
+        html += `<div class="card-list" style="margin-top:${(activeSub.length||archivedSub.length)?'18px':'0'};">`;
+        sortItems(activeCards, f.sortMode, x=>x.front).forEach(c=>{ html += cardRow(c,false); });
+        html += '</div>';
+        if(ownerMode && archivedCards.length>0){
+          const open = !!uiState.openArchives['cards_'+f.id];
+          html += `<button class="archive-toggle${open?' open':''}" data-action="toggle-archive" data-key="cards_${f.id}"><span class="chev">▶</span> Cards arquivados (${archivedCards.length})</button>`;
+          if(open){
+            html += '<div class="archive-section">';
+            archivedCards.forEach(c=>{ html += cardRow(c,true); });
+            html += '</div>';
+          }
         }
       }
     }
     appEl.innerHTML = html;
+  }
+
+  function seenToggleHtml(c){
+    const seen = !!c.seen;
+    return `<button class="btn-icon seen-toggle${seen?' seen':''}" data-action="toggle-seen" data-id="${c.id}" title="${seen?'Marcado como já visto — clique para desmarcar':'Marcar como já visto'}">${seen?'✅':'⬜'}</button>`;
   }
 
   function cardRow(c, archived){
@@ -1555,7 +1485,8 @@
     else if(c.lastResult==='correto') metaBits.push('<span class="badge badge-correct">✓ Entendi</span>');
     if(c.frontImage || c.backImage) metaBits.push('<span class="badge" style="background:#6366f122;color:#a5b4fc;">🖼️ Imagem</span>');
     const thumb = c.frontImage || c.backImage;
-    return `<div class="item-row card-preview-row${archived?' archived-row':''}">
+    const dragAttrs = (!archived && ownerMode) ? `draggable="true" data-drag-type="card" data-drag-id="${c.id}"` : '';
+    return `<div class="item-row card-preview-row${archived?' archived-row':''}" ${dragAttrs}>
       <div class="item-main" style="cursor:default;">
         ${thumb?`<img class="card-thumb" src="${thumb}">`:''}
         <div class="item-text">
@@ -1565,6 +1496,7 @@
         </div>
       </div>
       <div class="item-actions">
+        ${seenToggleHtml(c)}
         ${!archived ? `<button class="btn-icon" data-action="reset-card" data-id="${c.id}" title="Resetar progresso">🔄</button>` : ''}
         ${ownerMode
           ? (archived
@@ -1588,7 +1520,7 @@
   const MIN_EASE = 1.3;
   const DAY_MS = 86400000;
 
-  // User-adjustable "new cards per day" cap (global, not per-aula). Unlimited by default —
+  // User-adjustable "new cards per day" cap (global, not per-folder). Unlimited by default —
   // this only exists so the user can throttle themselves later if they want to, not to
   // silently hide cards they haven't studied yet.
   function loadNewCardsPerDaySetting(){
@@ -1600,8 +1532,8 @@
     localStorage.setItem('mc_new_per_day', String(n));
   }
 
-  // User-adjustable "max cards per day" cap (global, not per-aula): a ceiling on the
-  // WHOLE deck (new + due) pulled per aula per day, independent of the new-cards cap.
+  // User-adjustable "max cards per day" cap (global, not per-folder): a ceiling on the
+  // WHOLE deck (new + due) pulled per folder per day, independent of the new-cards cap.
   function loadMaxCardsPerDaySetting(){
     const raw = localStorage.getItem('mc_max_per_day');
     const n = raw!==null ? parseInt(raw,10) : NaN;
@@ -1617,15 +1549,6 @@
   function ensureCardSrs(card){
     if(!card.srs) card.srs = createSrs();
     return card.srs;
-  }
-
-  // Returns true if any card was missing srs and got migrated (caller should persist).
-  function migrateSrs(modulos){
-    let migrated = false;
-    modulos.forEach(m=>m.disciplinas.forEach(d=>d.aulas.forEach(a=>a.cards.forEach(c=>{
-      if(!c.srs){ c.srs = createSrs(); migrated = true; }
-    }))));
-    return migrated;
   }
 
   // Pure: given the current srs and a rating ('again'|'hard'|'good'|'easy'),
@@ -1731,36 +1654,36 @@
   }
 
   /* ---------------- Study mode ---------------- */
-  // Per-aula "new cards introduced today" counter (local, resets daily; matches Anki's per-deck new-card limit).
-  function loadDailyNewCount(aulaId){
+  // Per-folder "new cards introduced today" counter (local, resets daily; matches Anki's per-deck new-card limit).
+  function loadDailyNewCount(folderId){
     try{
-      const raw = JSON.parse(localStorage.getItem('mc_srs_daily_'+aulaId));
+      const raw = JSON.parse(localStorage.getItem('mc_srs_daily_'+folderId));
       if(raw && raw.date === todayStr()) return raw.count;
     }catch(e){}
     return 0;
   }
-  function addDailyNewCount(aulaId, n){
+  function addDailyNewCount(folderId, n){
     if(n<=0) return;
-    localStorage.setItem('mc_srs_daily_'+aulaId, JSON.stringify({ date: todayStr(), count: loadDailyNewCount(aulaId)+n }));
+    localStorage.setItem('mc_srs_daily_'+folderId, JSON.stringify({ date: todayStr(), count: loadDailyNewCount(folderId)+n }));
   }
 
-  // Per-aula "total cards pulled into study today" counter (new + due combined;
+  // Per-folder "total cards pulled into study today" counter (new + due combined;
   // matches Anki's overall daily deck limit, separate from the new-cards-only cap above).
-  function loadDailyStudiedCount(aulaId){
+  function loadDailyStudiedCount(folderId){
     try{
-      const raw = JSON.parse(localStorage.getItem('mc_srs_studied_daily_'+aulaId));
+      const raw = JSON.parse(localStorage.getItem('mc_srs_studied_daily_'+folderId));
       if(raw && raw.date === todayStr()) return raw.count;
     }catch(e){}
     return 0;
   }
-  function addDailyStudiedCount(aulaId, n){
+  function addDailyStudiedCount(folderId, n){
     if(n<=0) return;
-    localStorage.setItem('mc_srs_studied_daily_'+aulaId, JSON.stringify({ date: todayStr(), count: loadDailyStudiedCount(aulaId)+n }));
+    localStorage.setItem('mc_srs_studied_daily_'+folderId, JSON.stringify({ date: todayStr(), count: loadDailyStudiedCount(folderId)+n }));
   }
 
-  function aulaSrsStats(aula){
+  function folderSrsStats(folder){
     const now = Date.now();
-    const active = aula.cards.filter(c=>!c.archived);
+    const active = allCardsUnder(folder).filter(c=>!c.archived);
     active.forEach(c=>ensureCardSrs(c));
     return {
       paraRevisar: active.filter(c=>c.srs.state!=='new' && c.srs.due<=now).length,
@@ -1807,10 +1730,10 @@
   // quickMode=true -> "Estudar tudo mesmo assim": binary Entendi/Ainda não,
   // never touches srs at all, so it never disturbs the spaced schedule.
   // quickMode falsy -> normal spaced-repetition study, due-filtered, SM-2 ratings.
-  function startStudy(aulaId, quickMode){
-    const found = findAula(aulaId);
+  function startStudy(folderId, quickMode){
+    const found = findFolder(folderId);
     if(!found) return;
-    const activeCards = found.aula.cards.filter(c=>!c.archived);
+    const activeCards = allCardsUnder(found.folder).filter(c=>!c.archived);
     if(activeCards.length===0) return;
     activeCards.forEach(c=>ensureCardSrs(c));
 
@@ -1820,23 +1743,23 @@
     }else{
       const now = Date.now();
       const due = activeCards.filter(c=>c.srs.state!=='new' && c.srs.due<=now).sort((a,b)=>a.srs.due-b.srs.due);
-      const newAllowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(aulaId));
+      const newAllowance = Math.max(0, loadNewCardsPerDaySetting() - loadDailyNewCount(folderId));
       let fresh = activeCards.filter(c=>c.srs.state==='new').slice(0, newAllowance);
 
       // Overall daily cap (new + due combined): due reviews always win, so any
       // trimming needed to fit under the cap comes out of the new cards first.
-      const maxAllowance = Math.max(0, loadMaxCardsPerDaySetting() - loadDailyStudiedCount(aulaId));
+      const maxAllowance = Math.max(0, loadMaxCardsPerDaySetting() - loadDailyStudiedCount(folderId));
       fresh = fresh.slice(0, Math.max(0, maxAllowance - due.length));
 
-      if(fresh.length>0) addDailyNewCount(aulaId, fresh.length);
+      if(fresh.length>0) addDailyNewCount(folderId, fresh.length);
       const combined = due.concat(fresh);
-      if(combined.length>0) addDailyStudiedCount(aulaId, combined.length);
+      if(combined.length>0) addDailyStudiedCount(folderId, combined.length);
       deck = combined.map(c=>c.id);
     }
-    if(deck.length===0){ goAula(aulaId); return; } // nothing to study right now — show the aula view (stats/fallback button) instead of doing nothing
+    if(deck.length===0){ goFolder(folderId); return; } // nothing to study right now — show the folder view (stats/fallback button) instead of doing nothing
 
     session = {
-      aulaId,
+      folderId,
       mode: quickMode ? 'quick' : 'spaced',
       round: 'main',
       deck,
@@ -1850,7 +1773,7 @@
       done: false,
       history: []
     };
-    view = {type:'study', aulaId};
+    view = {type:'study', folderId};
     render();
   }
 
@@ -1897,6 +1820,7 @@
     found.card.lastStudiedAt = todayStr();
     setCardProgress(cardId, found.card.lastResult, found.card.lastStudiedAt);
     if(correct) session.correctCount++; else session.wrongCount++;
+    if(!isQuick) saveContent();
 
     if(isQuick && !correct && !session.reviewDeck.includes(cardId)) session.reviewDeck.push(cardId);
 
@@ -1914,7 +1838,6 @@
         registerStudyCompletion();
       }
     }
-    if(!isQuick) saveContent();
     render();
   }
 
@@ -1941,24 +1864,23 @@
 
   function exitStudy(){
     session = null;
-    goAula(view.aulaId);
+    goFolder(view.folderId);
   }
 
   function renderStudyView(){
-    const found = findAula(view.aulaId);
+    const found = findFolder(view.folderId);
     if(!found || !session){ goLibrary(); return; }
-    const {modulo:m, discipline:d, aula:a} = found;
+    const f = found.folder;
+    const path = findFolderPath(view.folderId) || [f];
 
-    let html = renderBreadcrumb([
-      {label:'Biblioteca', action:'go-library'},
-      {label:m.name, action:'open-modulo-'+m.id},
-      {label:d.name, action:'open-discipline-'+d.id},
-      {label:a.name, action:'open-aula-'+a.id},
-      {label:'Estudar'}
-    ]);
+    let html = renderBreadcrumb(
+      [{label:'Biblioteca', action:'go-library'}]
+        .concat(path.map(p=>({label:p.name, action:'open-folder-'+p.id})))
+        .concat([{label:'Estudar'}])
+    );
 
     if(session.done){
-      html += renderCompletionScreen(a);
+      html += renderCompletionScreen(f);
       appEl.innerHTML = html;
       return;
     }
@@ -2033,24 +1955,124 @@
     appEl.innerHTML = html;
   }
 
-  function renderCompletionScreen(a){
+  function renderCompletionScreen(f){
     const hadRequeue = session.mode==='quick' ? session.hadReview : (session.deck.length > session.initialLength);
     const title = hadRequeue ? 'Revisão concluída!' : 'Deck completo!';
     const emoji = hadRequeue ? '🎯' : '🎉';
     return `<div class="completion-box">
       <div class="completion-emoji">${emoji}</div>
       <div class="completion-title">${title}</div>
-      <p class="page-sub">Você concluiu o estudo de "${escapeHtml(a.name)}"</p>
+      <p class="page-sub">Você concluiu o estudo de "${escapeHtml(f.name)}"</p>
       <div class="completion-stats">
         <div><div class="completion-stat-num" style="color:var(--success)">${session.correctCount}</div><div class="completion-stat-label">Acertos</div></div>
         <div><div class="completion-stat-num" style="color:var(--danger)">${session.wrongCount}</div><div class="completion-stat-label">Erros</div></div>
       </div>
       <div class="toolbar" style="justify-content:center;">
-        <button class="btn btn-primary" data-action="restart-study" data-id="${a.id}" data-mode="${session.mode}">🔁 Estudar novamente</button>
-        <button class="btn btn-ghost" data-action="exit-study">Voltar à aula</button>
+        <button class="btn btn-primary" data-action="restart-study" data-id="${f.id}" data-mode="${session.mode}">🔁 Estudar novamente</button>
+        <button class="btn btn-ghost" data-action="exit-study">Voltar à pasta</button>
       </div>
     </div>`;
   }
+
+  /* ---------------- Drag & drop: cards move into a folder shown in the same
+     view; both cards and folders can be dragged onto a sibling row to reorder
+     (which switches that list to "Manual" sort so the new order sticks). ---------- */
+  let dragPayload = null;
+
+  function handleDrop(payload, targetRow, before){
+    if(payload.type === 'card'){
+      const src = findCard(payload.id);
+      if(!src) return;
+      if(targetRow.dataset.dropFolder){
+        const destFound = findFolder(targetRow.dataset.dropFolder);
+        if(!destFound) return;
+        src.folder.cards = src.folder.cards.filter(c=>c.id!==payload.id);
+        destFound.folder.cards.push(src.card);
+        saveContent(); render();
+        return;
+      }
+      if(targetRow.dataset.dragType === 'card'){
+        const targetId = targetRow.dataset.dragId;
+        if(targetId === payload.id) return;
+        const list = src.folder.cards;
+        const fromIdx = list.findIndex(c=>c.id===payload.id);
+        if(fromIdx===-1) return;
+        list.splice(fromIdx,1);
+        let insertAt = list.findIndex(c=>c.id===targetId);
+        if(insertAt===-1){ list.splice(fromIdx,0,src.card); return; } // target wasn't a sibling — leave untouched
+        insertAt += before ? 0 : 1;
+        list.splice(insertAt,0,src.card);
+        src.folder.sortMode = 'manual';
+        saveContent(); render();
+      }
+      return;
+    }
+    if(payload.type === 'folder'){
+      if(payload.id === targetRow.dataset.dragId) return;
+      const src = findFolder(payload.id);
+      if(!src) return;
+      const targetFolderId = targetRow.dataset.dropFolder;
+      if(!targetFolderId) return;
+      const destFound = findFolder(targetFolderId);
+      if(!destFound || destFound.list !== src.list) return; // only reorder among siblings, never re-parent
+      const list = src.list;
+      const fromIdx = list.findIndex(x=>x.id===payload.id);
+      if(fromIdx===-1) return;
+      list.splice(fromIdx,1);
+      let insertAt = list.findIndex(x=>x.id===targetFolderId);
+      if(insertAt===-1){ list.splice(fromIdx,0,src.folder); return; }
+      insertAt += before ? 0 : 1;
+      list.splice(insertAt,0,src.folder);
+      if(src.parent) src.parent.sortMode = 'manual';
+      saveContent(); render();
+    }
+  }
+
+  document.addEventListener('dragstart', (e)=>{
+    const row = e.target.closest('[data-drag-id]');
+    if(!row || !ownerMode){ if(row) e.preventDefault(); return; }
+    dragPayload = { type: row.dataset.dragType, id: row.dataset.dragId };
+    e.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('dragging');
+  });
+  document.addEventListener('dragend', ()=>{
+    document.querySelectorAll('.dragging').forEach(el=>el.classList.remove('dragging'));
+    document.querySelectorAll('.drag-over').forEach(el=>el.classList.remove('drag-over','drop-before','drop-after'));
+    dragPayload = null;
+  });
+  document.addEventListener('dragover', (e)=>{
+    if(!ownerMode || !dragPayload) return;
+    const row = e.target.closest('[data-drop-folder], [data-drag-type]');
+    if(!row) return;
+    e.preventDefault();
+    document.querySelectorAll('.drag-over').forEach(el=>{ if(el!==row) el.classList.remove('drag-over','drop-before','drop-after'); });
+    row.classList.add('drag-over');
+    const rect = row.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height/2;
+    row.classList.toggle('drop-before', before);
+    row.classList.toggle('drop-after', !before);
+  });
+  document.addEventListener('dragleave', (e)=>{
+    const row = e.target.closest('[data-drop-folder], [data-drag-type]');
+    if(row && (!e.relatedTarget || !row.contains(e.relatedTarget))) row.classList.remove('drag-over','drop-before','drop-after');
+  });
+  document.addEventListener('drop', (e)=>{
+    if(!ownerMode) return;
+    const row = e.target.closest('[data-drop-folder], [data-drag-type]');
+    if(!row) return;
+    e.preventDefault();
+    const rect = row.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height/2;
+    row.classList.remove('drag-over','drop-before','drop-after');
+    let payload = dragPayload;
+    if(!payload){
+      try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ payload = null; }
+    }
+    dragPayload = null;
+    if(!payload || !payload.id) return;
+    handleDrop(payload, row, before);
+  });
 
   /* ---------------- Event delegation ---------------- */
   document.addEventListener('click', (e)=>{
@@ -2065,96 +2087,51 @@
       case 'go-library': goLibrary(); break;
       case 'noop': break;
 
-      case 'quick-card': quickNewCard(btn.dataset.level, id); break;
-      case 'quick-import': quickImportCards(btn.dataset.level, id); break;
-      case 'new-modulo': openModuloModal(null); break;
-      case 'edit-modulo': openModuloModal(getModulo(id)); break;
-      case 'archive-modulo': {
-        const m = getModulo(id); if(m){ m.archived = true; saveContent(); render(); }
-        break;
-      }
-      case 'restore-modulo': {
-        const m = getModulo(id); if(m){ m.archived = false; saveContent(); render(); }
-        break;
-      }
-      case 'delete-modulo': {
-        const m = getModulo(id);
-        if(m) openConfirmModal(`Tem certeza que deseja excluir permanentemente o módulo <b>${escapeHtml(m.name)}</b> e todas as suas disciplinas, aulas e cards? Essa ação não pode ser desfeita.`, ()=>{
-          state.modulos = state.modulos.filter(x=>x.id!==id);
-          saveContent();
-        });
-        break;
-      }
-      case 'open-modulo': goModulo(id); break;
+      case 'quick-card': quickNewCard(); break;
+      case 'quick-import': quickImportCards(); break;
 
-      case 'new-discipline': {
-        const m = getModulo(view.id);
-        if(m) openDisciplinaModal(m, null);
+      case 'new-folder': {
+        if(id){
+          const found = findFolder(id);
+          if(found) openFolderModal(found.folder.folders, null);
+        }else{
+          openFolderModal(state.root.folders, null);
+        }
         break;
       }
-      case 'edit-discipline': {
-        const found = findDiscipline(id);
-        if(found) openDisciplinaModal(found.modulo, found.discipline);
+      case 'edit-folder': {
+        const found = findFolder(id);
+        if(found) openFolderModal(found.list, found.folder);
         break;
       }
-      case 'archive-discipline': {
-        const found = findDiscipline(id);
-        if(found){ found.discipline.archived = true; saveContent(); render(); }
+      case 'archive-folder': {
+        const found = findFolder(id);
+        if(found){ found.folder.archived = true; saveContent(); render(); }
         break;
       }
-      case 'restore-discipline': {
-        const found = findDiscipline(id);
-        if(found){ found.discipline.archived = false; saveContent(); render(); }
+      case 'restore-folder': {
+        const found = findFolder(id);
+        if(found){ found.folder.archived = false; saveContent(); render(); }
         break;
       }
-      case 'delete-discipline': {
-        const found = findDiscipline(id);
-        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente a disciplina <b>${escapeHtml(found.discipline.name)}</b> e todo o seu conteúdo? Essa ação não pode ser desfeita.`, ()=>{
-          found.modulo.disciplinas = found.modulo.disciplinas.filter(x=>x.id!==id);
+      case 'delete-folder': {
+        const found = findFolder(id);
+        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente a pasta <b>${escapeHtml(found.folder.name)}</b> e todo o seu conteúdo (subpastas e cards)? Essa ação não pode ser desfeita.`, ()=>{
+          found.list.splice(found.list.indexOf(found.folder), 1);
           saveContent();
         });
         break;
       }
-      case 'open-discipline': goDiscipline(id); break;
-
-      case 'new-aula': {
-        const found = findDiscipline(view.id);
-        if(found) openAulaModal(found.discipline, null);
-        break;
-      }
-      case 'edit-aula': {
-        const found = findAula(id);
-        if(found) openAulaModal(found.discipline, found.aula);
-        break;
-      }
-      case 'archive-aula': {
-        const found = findAula(id);
-        if(found){ found.aula.archived = true; saveContent(); render(); }
-        break;
-      }
-      case 'restore-aula': {
-        const found = findAula(id);
-        if(found){ found.aula.archived = false; saveContent(); render(); }
-        break;
-      }
-      case 'delete-aula': {
-        const found = findAula(id);
-        if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente a aula <b>${escapeHtml(found.aula.name)}</b> e todos os seus cards? Essa ação não pode ser desfeita.`, ()=>{
-          found.discipline.aulas = found.discipline.aulas.filter(x=>x.id!==id);
-          saveContent();
-        });
-        break;
-      }
-      case 'open-aula': goAula(id); break;
+      case 'open-folder': goFolder(id); break;
 
       case 'new-card': {
-        const found = findAula(view.id);
-        if(found) openCardModal(found.aula, null);
+        const found = findFolder(id);
+        if(found) openCardModal(found.folder, null);
         break;
       }
       case 'edit-card': {
         const found = findCard(id);
-        if(found) openCardModal(found.aula, found.card);
+        if(found) openCardModal(found.folder, found.card);
         break;
       }
       case 'archive-card': {
@@ -2170,36 +2147,22 @@
       case 'delete-card': {
         const found = findCard(id);
         if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente este card? Essa ação não pode ser desfeita.`, ()=>{
-          found.aula.cards = found.aula.cards.filter(x=>x.id!==id);
+          found.folder.cards = found.folder.cards.filter(x=>x.id!==id);
           saveContent();
         });
         break;
       }
 
       case 'open-import': {
-        const found = findAula(view.id);
-        if(found) openImportModal(found.aula);
+        const found = findFolder(id);
+        if(found) openImportModal(found.folder);
         break;
       }
 
-      case 'reset-modulo': {
-        const m = getModulo(id);
-        if(m) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards do módulo <b>${escapeHtml(m.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todas as disciplinas, aulas e cards dessa pasta serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
-          resetCardsProgress(cardsOfModulo(m));
-        });
-        break;
-      }
-      case 'reset-discipline': {
-        const found = findDiscipline(id);
-        if(found) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards da disciplina <b>${escapeHtml(found.discipline.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todas as aulas e cards dessa subpasta serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
-          resetCardsProgress(cardsOfDiscipline(found.discipline));
-        });
-        break;
-      }
-      case 'reset-aula': {
-        const found = findAula(id);
-        if(found) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards da aula <b>${escapeHtml(found.aula.name)}</b>? O histórico de acertos/erros e o agendamento de revisão espaçada de todos os cards dessa aula serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
-          resetCardsProgress(found.aula.cards);
+      case 'reset-folder': {
+        const found = findFolder(id);
+        if(found) openResetConfirmModal(`Resetar o progresso de estudo de todos os cards da pasta <b>${escapeHtml(found.folder.name)}</b> (incluindo subpastas)? O histórico de acertos/erros e o agendamento de revisão espaçada serão reiniciados. Essa ação não pode ser desfeita.`, ()=>{
+          resetCardsProgress(allCardsUnder(found.folder));
         });
         break;
       }
@@ -2210,28 +2173,13 @@
         });
         break;
       }
+      case 'toggle-seen': toggleCardSeen(id); break;
 
       case 'open-study-settings': openStudySettingsModal(); break;
 
-      case 'export-aula': {
-        const found = findAula(id);
-        if(found) openExportModal(found.aula.cards.filter(c=>!c.archived), found.aula.name);
-        break;
-      }
-      case 'export-discipline': {
-        const found = findDiscipline(id);
-        if(found){
-          const cards = found.discipline.aulas.filter(a=>!a.archived).flatMap(a=>a.cards.filter(c=>!c.archived));
-          openExportModal(cards, found.discipline.name);
-        }
-        break;
-      }
-      case 'export-modulo': {
-        const m = getModulo(id);
-        if(m){
-          const cards = m.disciplinas.filter(d=>!d.archived).flatMap(d=>d.aulas.filter(a=>!a.archived).flatMap(a=>a.cards.filter(c=>!c.archived)));
-          openExportModal(cards, m.name);
-        }
+      case 'export-folder': {
+        const found = findFolder(id);
+        if(found) openExportModal(allCardsUnder(found.folder).filter(c=>!c.archived), found.folder.name);
         break;
       }
 
@@ -2247,7 +2195,7 @@
       case 'exit-study': exitStudy(); break;
       case 'edit-study-card': {
         const found = findCard(id);
-        if(found) openCardModal(found.aula, found.card, { onSaved: ()=>render() });
+        if(found) openCardModal(found.folder, found.card, { onSaved: ()=>render() });
         break;
       }
 
@@ -2255,9 +2203,7 @@
       case 'modal-overlay-click': break;
 
       default:
-        if(action.startsWith('open-modulo-')){ goModulo(action.replace('open-modulo-','')); }
-        else if(action.startsWith('open-discipline-')){ goDiscipline(action.replace('open-discipline-','')); }
-        else if(action.startsWith('open-aula-')){ goAula(action.replace('open-aula-','')); }
+        if(action.startsWith('open-folder-')){ goFolder(action.replace('open-folder-','')); }
         break;
     }
   });
@@ -2268,6 +2214,20 @@
     const key = toggle.dataset.key;
     uiState.openArchives[key] = !uiState.openArchives[key];
     render();
+  });
+
+  document.addEventListener('change', (e)=>{
+    const sel = e.target.closest('[data-action="set-sort-mode"]');
+    if(!sel || !ownerMode) return;
+    const targetId = sel.dataset.id;
+    if(targetId === 'root'){
+      state.root.sortMode = sel.value;
+    }else{
+      const found = findFolder(targetId);
+      if(!found) return;
+      found.folder.sortMode = sel.value;
+    }
+    saveContent(); render();
   });
 
   // Keyboard shortcuts during study: Space = reveal (same as tapping the card),
