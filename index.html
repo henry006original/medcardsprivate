@@ -191,7 +191,7 @@
   .card-preview-row .item-title{white-space:normal;}
   .card-preview-front{font-weight:600;font-size:15px;}
   .card-preview-back{font-size:13px;color:var(--text-secondary);margin-top:3px;}
-  .card-thumb{width:42px;height:42px;border-radius:10px;object-fit:cover;flex-shrink:0;}
+  .card-thumb{width:42px;height:42px;border-radius:10px;object-fit:cover;flex-shrink:0;cursor:zoom-in;}
   .seen-toggle.seen{background:#22c55e22;color:#4ade80;}
 
   /* Badges */
@@ -238,7 +238,7 @@
   .form-label{display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px;font-weight:500;}
   .form-group input,.form-group textarea,.form-group select{width:100%;}
   .card-image-field{margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .card-image-preview{max-width:160px;max-height:120px;border-radius:10px;display:block;margin-top:8px;object-fit:cover;}
+  .card-image-preview{max-width:160px;max-height:120px;border-radius:10px;display:block;margin-top:8px;object-fit:cover;cursor:zoom-in;}
   .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
   .emoji-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
   .emoji-choice{
@@ -292,6 +292,26 @@
   }
   .flashcard .back-divider{width:40px;height:2px;background:var(--accent);margin:14px auto;border-radius:2px;}
   .flashcard-image{max-width:100%;max-height:220px;border-radius:12px;margin:10px 0;object-fit:contain;}
+  .img-zoom-wrap{position:relative;display:inline-block;}
+  .img-zoom-btn{
+    position:absolute;bottom:16px;right:6px;
+    background:rgba(0,0,0,.55);color:#fff;border-radius:8px;
+    padding:5px 8px;font-size:14px;line-height:1;
+  }
+  .img-zoom-btn:hover{background:rgba(0,0,0,.75);}
+  .lightbox-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.9);
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;z-index:300;cursor:zoom-out;
+    animation:fadeIn .15s ease;
+  }
+  .lightbox-overlay img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
+  .lightbox-close{
+    position:absolute;top:16px;right:16px;
+    background:rgba(255,255,255,.15);color:#fff;border-radius:50%;
+    width:38px;height:38px;display:flex;align-items:center;justify-content:center;font-size:18px;
+  }
+  .lightbox-close:hover{background:rgba(255,255,255,.28);}
   .flashcard .front-recap{color:var(--text-secondary);font-size:15px;font-weight:500;}
   .flashcard .side-label-inline{position:static;display:block;margin-bottom:10px;}
 
@@ -363,6 +383,7 @@
 </nav>
 <div id="app"></div>
 <div id="modal-root"></div>
+<div id="lightbox-root"></div>
 
 <script>
 (function(){
@@ -396,11 +417,22 @@
     });
     return res.ok;
   }
+  // Parses a Noji (.ofc) deck export server-side (it's a zip nested with a
+  // zstd-compressed JSON blob — heavy to safely decode in-browser), returning
+  // plain {front,back,frontImage,backImage} cards ready to drop into a folder.
+  async function apiImportOfc(pin, fileBase64){
+    const res = await fetch(API_BASE + '/import-ofc', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin, fileBase64})
+    });
+    if(res.status === 401){ const e = new Error('unauthorized'); e.code = 401; throw e; }
+    if(!res.ok){ const e = new Error('import failed'); e.code = res.status; throw e; }
+    return res.json();
+  }
 
   const OWNER_ONLY_ACTIONS = new Set([
     'new-folder','edit-folder','archive-folder','restore-folder','delete-folder',
     'new-card','edit-card','archive-card','restore-card','delete-card',
-    'open-import','edit-study-card','quick-card','quick-import'
+    'open-import','edit-study-card','quick-card','quick-import','open-import-ofc'
   ]);
 
   function updateOwnerLockBtn(){
@@ -822,6 +854,20 @@
 
   let session = null; // active study session object
 
+  /* ---------------- Image lightbox (separate from modal-root so zooming an
+     image inside e.g. the card-edit modal doesn't blow away that modal) ---------------- */
+  const lightboxRoot = document.getElementById('lightbox-root');
+  function openImageLightbox(src){
+    lightboxRoot.innerHTML = `<div class="lightbox-overlay" data-action="close-lightbox">
+      <button class="lightbox-close" data-action="close-lightbox" type="button" title="Fechar">✕</button>
+      <img src="${src}">
+    </div>`;
+  }
+  function closeLightbox(){ lightboxRoot.innerHTML = ''; }
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && lightboxRoot.children.length>0) closeLightbox();
+  });
+
   /* ---------------- Modal ---------------- */
   const modalRoot = document.getElementById('modal-root');
   let pendingConfirmAction = null;
@@ -979,7 +1025,7 @@
     return `<input type="file" accept="image/*" style="display:none;">
       <button type="button" class="btn btn-sm btn-ghost" data-role="pick">${dataUrl?'🖼️ Trocar imagem':'🖼️ Adicionar imagem'}</button>
       ${dataUrl?`<button type="button" class="btn btn-sm btn-ghost" data-role="remove">✕ Remover imagem</button>`:''}
-      ${dataUrl?`<img class="card-image-preview" src="${dataUrl}">`:''}`;
+      ${dataUrl?`<img class="card-image-preview" src="${dataUrl}" data-action="zoom-image">`:''}`;
   }
   function imageFieldHtml(containerId, dataUrl){
     return `<div class="card-image-field" id="${containerId}">${imageFieldInnerHtml(dataUrl)}</div>`;
@@ -1182,6 +1228,126 @@
       currentValid.forEach(c=>{
         folder.cards.push({ id: uid(), front:c.front, back:c.back, frontImage:null, backImage:null, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
       });
+      saveContent(); closeModal();
+      if(opts.onImported) opts.onImported(); else render();
+    });
+  }
+
+  /* ---------- .ofc (Noji Cards) import modal ----------
+     The file itself (zip nested with a zstd-compressed JSON blob) is parsed
+     server-side (see apiImportOfc) — the browser only turns the picked file
+     into base64, then afterwards turns the server's plain {front,back,
+     frontImage,backImage} cards into real card objects: HTML fields become
+     plain text (via a detached element, so we don't need our own HTML
+     parser/entity-decoder) and each image data URL is re-compressed through
+     the same pipeline used for a manually-attached card image. ---------- */
+  function htmlFieldToText(html){
+    const div = document.createElement('div');
+    div.innerHTML = html || '';
+    return div.textContent.trim();
+  }
+  function fileToBase64(file){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        const result = reader.result;
+        const idx = result.indexOf(',');
+        resolve(idx>=0 ? result.slice(idx+1) : result);
+      };
+      reader.onerror = ()=>reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+  async function compressDataUrlImage(dataUrl){
+    if(!dataUrl) return null;
+    const blob = await (await fetch(dataUrl)).blob();
+    return compressImageFile(blob, 1000, 0.75);
+  }
+
+  function openOfcImportModal(folder, opts){
+    opts = opts || {};
+    let parsedCards = null;
+    let deckName = '';
+
+    openModal(`
+      <div class="modal-title">📥 Importar .ofc (Noji Cards)</div>
+      <p class="modal-danger-text">Selecione o arquivo <b>.ofc</b> exportado do Noji Cards. As imagens dos cards são importadas junto, automaticamente.</p>
+      <div class="form-group">
+        <div class="dropzone" id="ofc-dropzone">
+          📄 Arraste o arquivo .ofc aqui ou clique para escolher
+          <input type="file" id="f-ofc-file" accept=".ofc" style="display:none;">
+        </div>
+      </div>
+      <div id="ofc-status" style="font-size:13.5px;color:var(--text-secondary);margin-top:8px;"></div>
+      <div class="import-preview" id="ofc-preview" style="display:none;"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+        <button class="btn btn-primary" id="confirm-ofc-btn" disabled>Importar cards</button>
+      </div>
+    `);
+
+    const dropzone = document.getElementById('ofc-dropzone');
+    const fileInput = document.getElementById('f-ofc-file');
+    const statusEl = document.getElementById('ofc-status');
+    const previewBox = document.getElementById('ofc-preview');
+    const confirmBtn = document.getElementById('confirm-ofc-btn');
+
+    dropzone.addEventListener('click', ()=>fileInput.click());
+    fileInput.addEventListener('change', (e)=>{ const file = e.target.files[0]; if(file) handleFile(file); });
+    dropzone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e)=>{
+      e.preventDefault(); dropzone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if(file) handleFile(file);
+    });
+
+    async function handleFile(file){
+      parsedCards = null;
+      confirmBtn.disabled = true;
+      previewBox.style.display = 'none';
+      statusEl.textContent = '⏳ Lendo e processando o arquivo…';
+      try{
+        const base64 = await fileToBase64(file);
+        const result = await apiImportOfc(ownerPin, base64);
+        deckName = result.deckName || file.name.replace(/\.ofc$/i,'');
+        parsedCards = Array.isArray(result.cards) ? result.cards : [];
+        if(parsedCards.length === 0){
+          statusEl.textContent = '⚠️ Nenhum card encontrado nesse arquivo.';
+          return;
+        }
+        statusEl.textContent = `✓ "${deckName}" — ${parsedCards.length} card(s) encontrado(s). Confira abaixo e confirme.`;
+        let html = '';
+        parsedCards.slice(0,50).forEach(c=>{
+          const frontText = htmlFieldToText(c.front);
+          const backText = htmlFieldToText(c.back);
+          const thumb = c.frontImage || c.backImage;
+          html += `<div class="import-preview-row">
+            ${thumb?`<img src="${thumb}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;flex-shrink:0;">`:''}
+            <div class="import-preview-front">${escapeHtml(frontText||'(sem texto)')}</div>
+            <div class="import-preview-back">${escapeHtml(backText||'(sem texto)')}</div>
+          </div>`;
+        });
+        previewBox.innerHTML = html;
+        previewBox.style.display = '';
+        confirmBtn.disabled = false;
+      }catch(err){
+        if(err && err.code === 401) statusEl.textContent = '⚠️ PIN inválido — saia e entre de novo como dono.';
+        else statusEl.textContent = '⚠️ Não foi possível processar esse arquivo. Verifique se é um .ofc válido do Noji Cards e tente de novo.';
+      }
+    }
+
+    confirmBtn.addEventListener('click', async ()=>{
+      if(!parsedCards || !parsedCards.length) return;
+      confirmBtn.disabled = true;
+      statusEl.textContent = '⏳ Importando cards e comprimindo imagens…';
+      for(const c of parsedCards){
+        const front = htmlFieldToText(c.front);
+        const back = htmlFieldToText(c.back);
+        const frontImage = await compressDataUrlImage(c.frontImage);
+        const backImage = await compressDataUrlImage(c.backImage);
+        folder.cards.push({ id: uid(), front, back, frontImage, backImage, archived:false, lastResult:null, lastStudiedAt:null, srs: createSrs() });
+      }
       saveContent(); closeModal();
       if(opts.onImported) opts.onImported(); else render();
     });
@@ -1422,6 +1588,7 @@
       ${ownerMode ? `<button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
       <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
       <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
+      <button class="btn btn-ghost" data-action="open-import-ofc" data-id="${f.id}">📥 Importar .ofc (Noji)</button>
       <button class="btn btn-ghost" data-action="edit-folder" data-id="${f.id}">Editar pasta</button>` : ''}
       <button class="btn btn-ghost" data-action="export-folder" data-id="${f.id}">⇩ Exportar tudo</button>
       <button class="btn btn-ghost" data-action="reset-folder" data-id="${f.id}">🔄 Resetar progresso</button>
@@ -1436,6 +1603,7 @@
           <button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
           <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
           <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
+          <button class="btn btn-ghost" data-action="open-import-ofc" data-id="${f.id}">📥 Importar .ofc (Noji)</button>
         </div>` : ''}
       </div>`;
     }else{
@@ -1488,7 +1656,7 @@
     const dragAttrs = (!archived && ownerMode) ? `draggable="true" data-drag-type="card" data-drag-id="${c.id}"` : '';
     return `<div class="item-row card-preview-row${archived?' archived-row':''}" ${dragAttrs}>
       <div class="item-main" style="cursor:default;">
-        ${thumb?`<img class="card-thumb" src="${thumb}">`:''}
+        ${thumb?`<img class="card-thumb" src="${thumb}" data-action="zoom-image">`:''}
         <div class="item-text">
           <div class="card-preview-front">${escapeHtml(c.front)}</div>
           <div class="card-preview-back">${escapeHtml(c.back)}</div>
@@ -1891,6 +2059,15 @@
 
     const sc = currentSessionCard();
     const cardData = sc ? sc.card : null;
+    // Wrapped with its own zoom button (rather than a click on the image itself)
+    // because the whole flashcard is already a tap target for revealing the
+    // answer — a dedicated button lets you zoom without accidentally revealing.
+    function flashcardImageHtml(src){
+      if(!src) return '';
+      return `<div class="img-zoom-wrap"><img class="flashcard-image" src="${src}">
+        <button class="img-zoom-btn" data-action="zoom-image" type="button" title="Ampliar imagem">🔍</button>
+      </div>`;
+    }
 
     const isQuick = session.mode === 'quick';
     const topLabel = isQuick
@@ -1910,18 +2087,18 @@
       if(!session.revealed){
         html += `<div class="flashcard" data-action="reveal-card">
           <span class="side-label">Pergunta</span>
-          ${cardData.frontImage?`<img class="flashcard-image" src="${cardData.frontImage}">`:''}
+          ${flashcardImageHtml(cardData.frontImage)}
           <div>${escapeHtml(cardData.front)}</div>
           <span class="tap-hint">Toque para revelar a resposta</span>
         </div>`;
       }else{
         html += `<div class="flashcard revealed">
           <span class="side-label">Pergunta</span>
-          ${cardData.frontImage?`<img class="flashcard-image" src="${cardData.frontImage}">`:''}
+          ${flashcardImageHtml(cardData.frontImage)}
           <div class="front-recap">${escapeHtml(cardData.front)}</div>
           <div class="back-divider"></div>
           <span class="side-label side-label-inline">Resposta</span>
-          ${cardData.backImage?`<img class="flashcard-image" src="${cardData.backImage}">`:''}
+          ${flashcardImageHtml(cardData.backImage)}
           <div>${escapeHtml(cardData.back)}</div>
         </div>`;
       }
@@ -2158,6 +2335,11 @@
         if(found) openImportModal(found.folder);
         break;
       }
+      case 'open-import-ofc': {
+        const found = findFolder(id);
+        if(found) openOfcImportModal(found.folder);
+        break;
+      }
 
       case 'reset-folder': {
         const found = findFolder(id);
@@ -2201,6 +2383,16 @@
 
       case 'close-modal': closeModal(); break;
       case 'modal-overlay-click': break;
+
+      case 'zoom-image': {
+        // btn is the <img> itself for direct-click images (list thumb, card
+        // preview), or the overlay zoom button for flashcard images — the
+        // latter sits next to its image inside a shared .img-zoom-wrap.
+        const img = btn.tagName === 'IMG' ? btn : btn.closest('.img-zoom-wrap')?.querySelector('img');
+        if(img) openImageLightbox(img.src);
+        break;
+      }
+      case 'close-lightbox': closeLightbox(); break;
 
       default:
         if(action.startsWith('open-folder-')){ goFolder(action.replace('open-folder-','')); }
