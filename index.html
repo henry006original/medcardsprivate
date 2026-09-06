@@ -1030,33 +1030,49 @@
   function imageFieldHtml(containerId, dataUrl){
     return `<div class="card-image-field" id="${containerId}">${imageFieldInnerHtml(dataUrl)}</div>`;
   }
-  // onChange(dataUrl|null) fires whenever the user picks or removes an image;
-  // the container re-renders itself so pick/remove keep working after a change.
-  function wireImageField(containerId, initialUrl, onChange){
+  // onChange(dataUrl|null) fires whenever the user picks, pastes or removes an
+  // image; the container re-renders itself so pick/remove keep working after
+  // a change. opts.pasteTarget (e.g. the front/back textarea) lets Ctrl+V with
+  // an image on the clipboard attach it directly, no save-to-disk round trip.
+  function wireImageField(containerId, initialUrl, onChange, opts){
+    opts = opts || {};
     const root = document.getElementById(containerId);
     let busy = false;
+    async function applyFile(file){
+      if(!file || busy) return;
+      busy = true;
+      try{
+        const dataUrl = await compressImageFile(file, 1000, 0.75);
+        onChange(dataUrl);
+        root.innerHTML = imageFieldInnerHtml(dataUrl);
+      }catch(err){
+        alert('Não foi possível carregar essa imagem.');
+      }
+      busy = false;
+      bind();
+    }
     function bind(){
       root.querySelector('[data-role="pick"]').addEventListener('click', ()=>{
         if(!busy) root.querySelector('input[type=file]').click();
       });
       const removeBtn = root.querySelector('[data-role="remove"]');
       if(removeBtn) removeBtn.addEventListener('click', ()=>{ onChange(null); root.innerHTML = imageFieldInnerHtml(null); bind(); });
-      root.querySelector('input[type=file]').addEventListener('change', async (e)=>{
-        const file = e.target.files[0];
-        if(!file) return;
-        busy = true;
-        try{
-          const dataUrl = await compressImageFile(file, 1000, 0.75);
-          onChange(dataUrl);
-          root.innerHTML = imageFieldInnerHtml(dataUrl);
-        }catch(err){
-          alert('Não foi possível carregar essa imagem.');
-        }
-        busy = false;
-        bind();
-      });
+      root.querySelector('input[type=file]').addEventListener('change', (e)=>{ applyFile(e.target.files[0]); });
     }
     bind();
+    if(opts.pasteTarget){
+      opts.pasteTarget.addEventListener('paste', (e)=>{
+        const items = e.clipboardData && e.clipboardData.items;
+        if(!items) return;
+        for(const item of items){
+          if(item.type && item.type.indexOf('image/')===0){
+            e.preventDefault();
+            applyFile(item.getAsFile());
+            break;
+          }
+        }
+      });
+    }
   }
 
   /* ---------- Card modal ---------- */
@@ -1083,8 +1099,8 @@
       </div>
     `);
     document.getElementById('f-card-front').focus();
-    wireImageField('front-image-field', frontImage, (url)=>{ frontImage = url; });
-    wireImageField('back-image-field', backImage, (url)=>{ backImage = url; });
+    wireImageField('front-image-field', frontImage, (url)=>{ frontImage = url; }, { pasteTarget: document.getElementById('f-card-front') });
+    wireImageField('back-image-field', backImage, (url)=>{ backImage = url; }, { pasteTarget: document.getElementById('f-card-back') });
     document.getElementById('save-card-btn').addEventListener('click', ()=>{
       const front = document.getElementById('f-card-front').value.trim();
       const back = document.getElementById('f-card-back').value.trim();
