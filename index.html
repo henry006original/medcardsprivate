@@ -417,11 +417,12 @@
     });
     return res.ok;
   }
-  // Parses a Noji (.ofc) deck export server-side (it's a zip nested with a
-  // zstd-compressed JSON blob — heavy to safely decode in-browser), returning
-  // plain {front,back,frontImage,backImage} cards ready to drop into a folder.
-  async function apiImportOfc(pin, fileBase64){
-    const res = await fetch(API_BASE + '/import-ofc', {
+  // Parses a deck export (.ofc from Noji Cards, or .apkg from Anki) server-side
+  // — both are zips wrapping formats too heavy/risky to safely decode
+  // in-browser (Zstandard, SQLite) — returning plain {front,back,frontImage,
+  // backImage} cards ready to drop into a folder.
+  async function apiImportDeck(pin, fileBase64){
+    const res = await fetch(API_BASE + '/import-deck', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin, fileBase64})
     });
     if(res.status === 401){ const e = new Error('unauthorized'); e.code = 401; throw e; }
@@ -432,7 +433,7 @@
   const OWNER_ONLY_ACTIONS = new Set([
     'new-folder','edit-folder','archive-folder','restore-folder','delete-folder',
     'new-card','edit-card','archive-card','restore-card','delete-card',
-    'open-import','edit-study-card','quick-card','quick-import','open-import-ofc','archive-study-card'
+    'open-import','edit-study-card','quick-card','quick-import','open-import-deck','archive-study-card'
   ]);
 
   function updateOwnerLockBtn(){
@@ -1249,14 +1250,14 @@
     });
   }
 
-  /* ---------- .ofc (Noji Cards) import modal ----------
-     The file itself (zip nested with a zstd-compressed JSON blob) is parsed
-     server-side (see apiImportOfc) — the browser only turns the picked file
-     into base64, then afterwards turns the server's plain {front,back,
-     frontImage,backImage} cards into real card objects: HTML fields become
-     plain text (via a detached element, so we don't need our own HTML
-     parser/entity-decoder) and each image data URL is re-compressed through
-     the same pipeline used for a manually-attached card image. ---------- */
+  /* ---------- Deck import modal (.ofc from Noji Cards, .apkg from Anki) ----------
+     The file itself is parsed server-side (see apiImportDeck) — the browser
+     only turns the picked file into base64, then afterwards turns the
+     server's plain {front,back,frontImage,backImage} cards into real card
+     objects: HTML fields become plain text (via a detached element, so we
+     don't need our own HTML parser/entity-decoder) and each image data URL
+     is re-compressed through the same pipeline used for a manually-attached
+     card image. ---------- */
   function htmlFieldToText(html){
     const div = document.createElement('div');
     div.innerHTML = html || '';
@@ -1280,33 +1281,33 @@
     return compressImageFile(blob, 1000, 0.75);
   }
 
-  function openOfcImportModal(folder, opts){
+  function openDeckImportModal(folder, opts){
     opts = opts || {};
     let parsedCards = null;
     let deckName = '';
 
     openModal(`
-      <div class="modal-title">📥 Importar .ofc (Noji Cards)</div>
-      <p class="modal-danger-text">Selecione o arquivo <b>.ofc</b> exportado do Noji Cards. As imagens dos cards são importadas junto, automaticamente.</p>
+      <div class="modal-title">📥 Importar baralho (.ofc / .apkg)</div>
+      <p class="modal-danger-text">Selecione um arquivo <b>.ofc</b> (Noji Cards) ou <b>.apkg</b> (Anki). As imagens dos cards são importadas junto, automaticamente.</p>
       <div class="form-group">
-        <div class="dropzone" id="ofc-dropzone">
-          📄 Arraste o arquivo .ofc aqui ou clique para escolher
-          <input type="file" id="f-ofc-file" accept=".ofc" style="display:none;">
+        <div class="dropzone" id="deck-dropzone">
+          📄 Arraste o arquivo .ofc ou .apkg aqui ou clique para escolher
+          <input type="file" id="f-deck-file" accept=".ofc,.apkg" style="display:none;">
         </div>
       </div>
-      <div id="ofc-status" style="font-size:13.5px;color:var(--text-secondary);margin-top:8px;"></div>
-      <div class="import-preview" id="ofc-preview" style="display:none;"></div>
+      <div id="deck-status" style="font-size:13.5px;color:var(--text-secondary);margin-top:8px;"></div>
+      <div class="import-preview" id="deck-preview" style="display:none;"></div>
       <div class="modal-footer">
         <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-        <button class="btn btn-primary" id="confirm-ofc-btn" disabled>Importar cards</button>
+        <button class="btn btn-primary" id="confirm-deck-btn" disabled>Importar cards</button>
       </div>
     `);
 
-    const dropzone = document.getElementById('ofc-dropzone');
-    const fileInput = document.getElementById('f-ofc-file');
-    const statusEl = document.getElementById('ofc-status');
-    const previewBox = document.getElementById('ofc-preview');
-    const confirmBtn = document.getElementById('confirm-ofc-btn');
+    const dropzone = document.getElementById('deck-dropzone');
+    const fileInput = document.getElementById('f-deck-file');
+    const statusEl = document.getElementById('deck-status');
+    const previewBox = document.getElementById('deck-preview');
+    const confirmBtn = document.getElementById('confirm-deck-btn');
 
     dropzone.addEventListener('click', ()=>fileInput.click());
     fileInput.addEventListener('change', (e)=>{ const file = e.target.files[0]; if(file) handleFile(file); });
@@ -1325,8 +1326,8 @@
       statusEl.textContent = '⏳ Lendo e processando o arquivo…';
       try{
         const base64 = await fileToBase64(file);
-        const result = await apiImportOfc(ownerPin, base64);
-        deckName = result.deckName || file.name.replace(/\.ofc$/i,'');
+        const result = await apiImportDeck(ownerPin, base64);
+        deckName = result.deckName || file.name.replace(/\.(ofc|apkg)$/i,'');
         parsedCards = Array.isArray(result.cards) ? result.cards : [];
         if(parsedCards.length === 0){
           statusEl.textContent = '⚠️ Nenhum card encontrado nesse arquivo.';
@@ -1349,7 +1350,7 @@
         confirmBtn.disabled = false;
       }catch(err){
         if(err && err.code === 401) statusEl.textContent = '⚠️ PIN inválido — saia e entre de novo como dono.';
-        else statusEl.textContent = '⚠️ Não foi possível processar esse arquivo. Verifique se é um .ofc válido do Noji Cards e tente de novo.';
+        else statusEl.textContent = '⚠️ Não foi possível processar esse arquivo. Verifique se é um .ofc (Noji) ou .apkg (Anki) válido e tente de novo.';
       }
     }
 
@@ -1604,7 +1605,7 @@
       ${ownerMode ? `<button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
       <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
       <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
-      <button class="btn btn-ghost" data-action="open-import-ofc" data-id="${f.id}">📥 Importar .ofc (Noji)</button>
+      <button class="btn btn-ghost" data-action="open-import-deck" data-id="${f.id}">📥 Importar baralho (.ofc/.apkg)</button>
       <button class="btn btn-ghost" data-action="edit-folder" data-id="${f.id}">Editar pasta</button>` : ''}
       <button class="btn btn-ghost" data-action="export-folder" data-id="${f.id}">⇩ Exportar tudo</button>
       <button class="btn btn-ghost" data-action="reset-folder" data-id="${f.id}">🔄 Resetar progresso</button>
@@ -1619,7 +1620,7 @@
           <button class="btn btn-primary" data-action="new-folder" data-id="${f.id}">+ Nova pasta</button>
           <button class="btn btn-ghost" data-action="new-card" data-id="${f.id}">+ Novo card</button>
           <button class="btn btn-ghost" data-action="open-import" data-id="${f.id}">⇪ Importar</button>
-          <button class="btn btn-ghost" data-action="open-import-ofc" data-id="${f.id}">📥 Importar .ofc (Noji)</button>
+          <button class="btn btn-ghost" data-action="open-import-deck" data-id="${f.id}">📥 Importar baralho (.ofc/.apkg)</button>
         </div>` : ''}
       </div>`;
     }else{
@@ -2387,9 +2388,9 @@
         if(found) openImportModal(found.folder);
         break;
       }
-      case 'open-import-ofc': {
+      case 'open-import-deck': {
         const found = findFolder(id);
-        if(found) openOfcImportModal(found.folder);
+        if(found) openDeckImportModal(found.folder);
         break;
       }
 
