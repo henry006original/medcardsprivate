@@ -432,7 +432,7 @@
   const OWNER_ONLY_ACTIONS = new Set([
     'new-folder','edit-folder','archive-folder','restore-folder','delete-folder',
     'new-card','edit-card','archive-card','restore-card','delete-card',
-    'open-import','edit-study-card','quick-card','quick-import','open-import-ofc'
+    'open-import','edit-study-card','quick-card','quick-import','open-import-ofc','archive-study-card'
   ]);
 
   function updateOwnerLockBtn(){
@@ -2051,6 +2051,30 @@
     goFolder(view.folderId);
   }
 
+  // Drops a card that just got archived/deleted mid-session out of the active
+  // deck (every occurrence — a learning-step card can appear more than once)
+  // and, if that emptied the deck, ends the session the same way running out
+  // of cards normally does (skipping the quick-mode review-round handoff and
+  // registerStudyCompletion() — the user bailed on cards, they didn't finish
+  // studying them, so it shouldn't count toward the streak).
+  function removeCardFromSessionDeck(cardId){
+    if(!session) return;
+    session.deck = session.deck.filter(id=>id!==cardId);
+    session.reviewDeck = session.reviewDeck.filter(id=>id!==cardId);
+    session.revealed = false;
+    if(session.pos >= session.deck.length){
+      if(session.mode==='quick' && session.round==='main' && session.reviewDeck.length>0){
+        session.round = 'review';
+        session.hadReview = true;
+        session.deck = shuffle(session.reviewDeck);
+        session.reviewDeck = [];
+        session.pos = 0;
+      }else{
+        session.done = true;
+      }
+    }
+  }
+
   function renderStudyView(){
     const found = findFolder(view.folderId);
     if(!found || !session){ goLibrary(); return; }
@@ -2142,6 +2166,8 @@
     html += `<div class="study-controls">
       <button class="btn btn-ghost btn-sm" data-action="undo-answer" ${session.history.length===0?'disabled':''}>↩ Desfazer</button>
       ${cardData && ownerMode?`<button class="btn btn-ghost btn-sm" data-action="edit-study-card" data-id="${cardData.id}">✏️ Editar card</button>`:''}
+      ${cardData && ownerMode?`<button class="btn btn-ghost btn-sm" data-action="archive-study-card" data-id="${cardData.id}">🗄️ Arquivar card</button>`:''}
+      ${cardData && ownerMode?`<button class="btn btn-danger btn-sm" data-action="delete-card" data-id="${cardData.id}">🗑️ Excluir card</button>`:''}
       <button class="btn btn-ghost btn-sm" data-action="exit-study">Sair do estudo</button>
     </div>`;
 
@@ -2342,7 +2368,17 @@
         if(found) openConfirmModal(`Tem certeza que deseja excluir permanentemente este card? Essa ação não pode ser desfeita.`, ()=>{
           found.folder.cards = found.folder.cards.filter(x=>x.id!==id);
           saveContent();
+          removeCardFromSessionDeck(id); // no-op outside study mode
         });
+        break;
+      }
+      case 'archive-study-card': {
+        const found = findCard(id);
+        if(found) openConfirmModal(`Tem certeza que deseja arquivar este card? Ele para de aparecer nos estudos, mas você pode desarquivá-lo quando quiser (dentro da pasta, em "Cards arquivados").`, ()=>{
+          found.card.archived = true;
+          saveContent();
+          removeCardFromSessionDeck(id);
+        }, { title:'🗄️ Arquivar card?', btnClass:'btn-warning', btnLabel:'Arquivar' });
         break;
       }
 
